@@ -3,7 +3,13 @@ name = "sts2engine"
 version = "0.1.0"
 edition = "2024"
 
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = false
+
 [dependencies]
+bumpalo = { version = "3.20.2", features = ["allocator_api", "collections"] }
 enum-map = "2.7.3"
 itertools = "0.14.0"
 rand = "0.10.0"

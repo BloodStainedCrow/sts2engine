@@ -16,7 +16,7 @@
     pkgs-codium = nixpkgs-codium.legacyPackages."x86_64-linux";
     fenixLib = fenix.packages."x86_64-linux";
 
-    toolchain_sha = "sha256-qqF33vNuAdU5vua96VKVIwuc43j4EFeEXbjQ6+l4mO4=";
+    toolchain_sha = "sha256-dXoddWaPL6UtPscTpxMUMBDL83jFtqeDtmH/+bXBs3E=";
 
     rustToolchain = fenixLib.fromToolchainFile {
       file = ./rust-toolchain.toml;

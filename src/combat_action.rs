@@ -1,6 +1,8 @@
-#[derive(Debug, Clone, Copy, PartialEq)]
+use crate::game_state::Card;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CombatAction {
-    PlayCard { index: u8, target: Option<u8> },
+    PlayCard { card: Card, target: Option<u8> },
 
     UsePotion { index: u8 },
 

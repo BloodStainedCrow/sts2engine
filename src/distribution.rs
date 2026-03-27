@@ -1,10 +1,11 @@
 use std::{
     iter::Sum,
-    ops::{Mul, MulAssign},
+    ops::{ControlFlow, Mul, MulAssign},
 };
 
+#[derive(Debug)]
 pub struct Distribution<Value> {
-    entries: Vec<(Value, f32)>,
+    pub entries: Vec<(Value, f32)>,
 }
 
 impl<Value: Copy + Sum<Value> + Mul<f32, Output = Value>> Distribution<Value> {
@@ -84,7 +85,8 @@ impl<Value> Distribution<Value> {
 
     #[must_use]
     pub(crate) fn collapse(self) -> Value {
-        let random: f32 = rand::random_range(0.0..1.0);
+        // let random: f32 = rand::random_range(0.0..1.0);
+        let random: f32 = 0.0;
 
         let mut done = 0.0;
         for (val, chance) in self.entries {
@@ -109,8 +111,25 @@ impl<Value> Distribution<Value> {
         }
     }
 
+    pub(crate) fn try_map<B, T>(
+        self,
+        mut fun: impl FnMut(Value) -> ControlFlow<B, T>,
+    ) -> ControlFlow<B, Distribution<T>> {
+        let Self { entries } = self;
+
+        let entries: Vec<_> = entries
+            .into_iter()
+            .map(|(val, chance)| (fun)(val).map_continue(|v| (v, chance)))
+            .try_collect::<Vec<_>>()?;
+
+        ControlFlow::Continue(Distribution { entries })
+    }
+
     #[must_use]
-    pub(crate) fn flat_map<T>(self, fun: impl Fn(Value) -> Distribution<T>) -> Distribution<T> {
+    pub(crate) fn flat_map<T>(
+        self,
+        mut fun: impl FnMut(Value) -> Distribution<T>,
+    ) -> Distribution<T> {
         let Self { entries } = self;
 
         // Note: This does not deduplicate
