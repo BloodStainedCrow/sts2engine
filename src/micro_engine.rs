@@ -10,6 +10,7 @@ use std::{
 };
 
 use itertools::Itertools;
+use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::{
     combat_action::CombatAction,
@@ -18,7 +19,7 @@ use crate::{
 };
 
 #[derive(Debug)]
-struct MicroEngine<F: EvaluationFunction> {
+pub struct MicroEngine<F: EvaluationFunction> {
     // arena: bumpalo::Bump,
     eval_function: F,
 
@@ -44,7 +45,7 @@ enum EvalRunResult<EvalResult> {
     },
 }
 
-trait EvaluationFunction {
+pub trait EvaluationFunction {
     type EvalResult: Debug
         + Copy
         + Sum<Self::EvalResult>
@@ -58,26 +59,36 @@ trait EvaluationFunction {
     fn expected_evaluation(&self, combat_state: &CombatState) -> Self::EvalResult;
 }
 
-trait EvalResult {
+pub trait EvalResult {
     const MIN: Self;
     const ZERO: Self;
 }
 
 impl<F: EvaluationFunction> MicroEngine<F> {
-    fn next_combat_action(
+    pub fn new(fun: F) -> Self {
+        Self {
+            eval_function: fun,
+            transposition_table: RapidHashMap::new(),
+            stop_signal: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    pub fn next_combat_action(
         &mut self,
         state: &CombatState,
         max_depth: u8,
 
         timeout: Duration,
+
+        logger: impl Fn(String),
     ) -> (Option<CombatAction>, Option<F::EvalResult>) {
         if state.get_post_game_state().is_some() {
             return (None, None);
         }
 
-        if let Ok(single_action) = state.legal_actions().exactly_one() {
-            return (Some(single_action), None);
-        }
+        // if let Ok(single_action) = state.legal_actions().exactly_one() {
+        //     return (Some(single_action), None);
+        // }
 
         self.stop_signal
             .store(false, std::sync::atomic::Ordering::SeqCst);
@@ -97,16 +108,42 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                     break;
                 }
             }
+
+            let res = self
+                .transposition_table
+                .get(state)
+                .map_or((None, None), |entry| match entry.eval {
+                    EvalRunResult::Exact { eval, action } => (Some(action), Some(eval)),
+                    EvalRunResult::UpperBound(upper) => {
+                        unreachable!("Only found upper bound {upper:?}")
+                    }
+                });
+
+            (logger)(format!("[Depth {depth}]: {res:?}",));
+
+            // TODO: Debug
+            // if let Some(action) = res.0 {
+            //     let res = state.apply(action);
+            //     (logger)(format!(
+            //         "Resulting in e.g.: {:?}",
+            //         res.entries.first().unwrap().0.player.creature
+            //     ));
+            // }
         }
 
-        self.transposition_table
+        let final_eval = self
+            .transposition_table
             .get(state)
-            .map_or((None, None), |entry| {
-                let EvalRunResult::Exact { eval, action } = entry.eval else {
-                    unreachable!()
-                };
-                (Some(action), Some(eval))
-            })
+            .map_or((None, None), |entry| match entry.eval {
+                EvalRunResult::Exact { eval, action } => (Some(action), Some(eval)),
+                EvalRunResult::UpperBound(upper) => {
+                    unreachable!("Only found upper bound {upper:?}")
+                }
+            });
+
+        (logger)(format!("[Final Eval]: {final_eval:?}"));
+
+        final_eval
     }
 
     pub(crate) fn get_action_map(
@@ -194,11 +231,11 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                     match action {
                         CombatAction::PlayCard { card, target } => {
                             match card.prototype.get_kind() {
-                                crate::game_state::CardKind::Attack => 0,
-                                crate::game_state::CardKind::Skill => 2,
-                                crate::game_state::CardKind::Power => 1,
-                                crate::game_state::CardKind::Status => 3,
-                                crate::game_state::CardKind::Curse => 4,
+                                crate::game_state::cards::CardKind::Attack => 0,
+                                crate::game_state::cards::CardKind::Skill => 2,
+                                crate::game_state::cards::CardKind::Power => 1,
+                                crate::game_state::cards::CardKind::Status => 3,
+                                crate::game_state::cards::CardKind::Curse => 4,
                             }
                         }
                         CombatAction::UsePotion { index } => 10,
@@ -264,12 +301,11 @@ impl<F: EvaluationFunction> MicroEngine<F> {
 
         match self.transposition_table.entry(state) {
             std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
-                if max_depth >= occupied_entry.get().depth_searched {
-                    if best_action_here.is_some()
-                        || matches!(occupied_entry.get().eval, EvalRunResult::UpperBound(_))
-                    {
-                        occupied_entry.insert(new_entry);
-                    }
+                if max_depth >= occupied_entry.get().depth_searched
+                    && (best_action_here.is_some()
+                        || matches!(occupied_entry.get().eval, EvalRunResult::UpperBound(_)))
+                {
+                    occupied_entry.insert(new_entry);
                 }
             }
             std::collections::hash_map::Entry::Vacant(vacant_entry) => {
@@ -306,72 +342,12 @@ mod test {
     use enum_map::EnumMap;
     use rapidhash::HashMapExt;
 
-    use crate::game_state::{self, Creature, Enemy, EnemyStateMachine, Player, Status};
+    use crate::{
+        TestEngineCurrentHp,
+        game_state::{self, Creature, Enemy, EnemyStateMachine, Player, Status},
+    };
 
     use super::*;
-
-    struct TestEngineCurrentHp {}
-
-    impl EvalResult for f32 {
-        const MIN: Self = Self::MIN;
-        const ZERO: Self = 0.0;
-    }
-
-    impl EvaluationFunction for TestEngineCurrentHp {
-        type EvalResult = f32;
-
-        fn evaluate_postgame_state(&self, post_combat_state: PostCombatState) -> Self::EvalResult {
-            // f32::from(post_combat_state.turn_counter)
-            //     .mul_add(-0.01, f32::from(post_combat_state.hp))
-            f32::from(post_combat_state.hp)
-        }
-
-        fn best_possible_evaluation(&self, combat_state: &CombatState) -> Self::EvalResult {
-            f32::from(combat_state.player.creature.hp)
-            // 1.0,
-        }
-
-        fn expected_evaluation(&self, combat_state: &CombatState) -> Self::EvalResult {
-            let damage_done_per_turn = 10.0;
-            let damage_taken_per_turn =
-                5.0 * (f32::from(combat_state.turn_counter + 1) / 3.0).ceil();
-
-            let mut enemies: Vec<_> = combat_state.enemies.iter().collect();
-
-            let incoming_damage: u16 = enemies
-                .iter()
-                .map(|enemy| match enemy.prototype.get_moveset() {
-                    game_state::EnemyMoveSet::ConstantRotation { rotation } => {
-                        let mov = &rotation[enemy.state_machine.current_state];
-                        mov.attack
-                            .0
-                            .saturating_add_signed(enemy.creature.statuses[Status::Strength])
-                            * mov.attack.1
-                    }
-                })
-                .sum();
-
-            enemies.sort_by_key(|enemy| enemy.creature.hp);
-
-            let turns_per_enemy = enemies
-                .into_iter()
-                .map(|hp| hp.creature.hp as f32 / damage_done_per_turn)
-                .collect_vec();
-
-            let mut damage = 0.0;
-            for start in 0..turns_per_enemy.len() {
-                damage += turns_per_enemy[start]
-                    * (turns_per_enemy.len() - start) as f32
-                    * damage_taken_per_turn;
-            }
-
-            let eval = f32::from(combat_state.player.creature.hp)
-                - damage
-                - f32::from(incoming_damage.saturating_sub(combat_state.player.creature.block));
-
-            eval
-        }
-    }
 
     #[test]
     fn ensure_focus_is_preferred() {
@@ -553,8 +529,9 @@ mod test {
             stop_signal: Arc::new(AtomicBool::new(false)),
         };
 
-        let state = game_state::test::very_confused();
+        let state = game_state::test::unneeded_blocking();
 
+        dbg!(engine.evaluate(state.clone(), f32::MIN, 4));
         let map = engine
             .get_action_map(&state)
             .into_iter()
@@ -566,7 +543,7 @@ mod test {
 
     #[test]
     fn test_eval() {
-        let mut state = game_state::test::simple_test_combat_state();
+        let mut state = game_state::test::unneeded_blocking();
 
         let mut engine = MicroEngine {
             eval_function: TestEngineCurrentHp {},
@@ -585,7 +562,10 @@ mod test {
             //     .collect_vec();
 
             // print_action_map(&map, &state);
-            let (action, eval) = engine.next_combat_action(&state, 99, Duration::from_secs(1));
+            let (action, eval) =
+                engine.next_combat_action(&state, 99, Duration::from_secs(10), |msg| {
+                    eprintln!("{msg}");
+                });
             dbg!(&action);
 
             if let Some(action) = action {

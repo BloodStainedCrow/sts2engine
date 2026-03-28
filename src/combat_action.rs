@@ -1,4 +1,4 @@
-use crate::game_state::Card;
+use crate::game_state::cards::Card;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CombatAction {

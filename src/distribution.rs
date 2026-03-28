@@ -1,4 +1,6 @@
 use std::{
+    collections::HashMap,
+    hash::Hash,
     iter::Sum,
     ops::{ControlFlow, Mul, MulAssign},
 };
@@ -38,6 +40,25 @@ impl<Value> Distribution<Distribution<Value>> {
             .collect();
 
         Distribution { entries: reduced }
+    }
+}
+
+impl<Value: PartialEq + Eq + Hash> Distribution<Value> {
+    pub(crate) fn dedup(&mut self) {
+        let mut new_entries = HashMap::new();
+
+        for (val, chance) in self.entries.drain(..) {
+            match new_entries.entry(val) {
+                std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
+                    *occupied_entry.get_mut() += chance;
+                }
+                std::collections::hash_map::Entry::Vacant(vacant_entry) => {
+                    vacant_entry.insert(chance);
+                }
+            }
+        }
+
+        self.entries.extend(new_entries);
     }
 }
 
@@ -85,10 +106,13 @@ impl<Value> Distribution<Value> {
 
     #[must_use]
     pub(crate) fn collapse(self) -> Value {
-        // let random: f32 = rand::random_range(0.0..1.0);
-        let random: f32 = 0.0;
+        let random: f32 = rand::random_range(0.0..1.0);
+        // let random: f32 = 0.0;
 
         let mut done = 0.0;
+
+        assert!(!self.entries.is_empty());
+
         for (val, chance) in self.entries {
             let new_done = done + chance;
             if new_done > random {
@@ -97,6 +121,21 @@ impl<Value> Distribution<Value> {
             done = new_done;
         }
         unreachable!()
+    }
+
+    #[must_use]
+    pub(crate) fn fix_odds(mut self) -> Self {
+        let sum: f32 = self.entries.iter().map(|(_, chance)| *chance).sum();
+        for (_, chance) in self.entries.iter_mut() {
+            *chance = *chance / sum;
+        }
+
+        self
+    }
+
+    #[must_use]
+    pub(crate) fn retain_no_chance_fix(&mut self, filter: impl Fn(&Value) -> bool) {
+        self.entries.retain(|(v, _)| (filter)(v));
     }
 
     #[must_use]
@@ -130,20 +169,27 @@ impl<Value> Distribution<Value> {
         self,
         mut fun: impl FnMut(Value) -> Distribution<T>,
     ) -> Distribution<T> {
-        let Self { entries } = self;
+        let Self { mut entries } = self;
 
-        // Note: This does not deduplicate
-        let reduced = entries
-            .into_iter()
-            .flat_map(|(entry, chance)| {
-                let mapped = (fun)(entry);
-                mapped
-                    .entries
-                    .into_iter()
-                    .map(move |(v, inner)| (v, inner * chance))
-            })
-            .collect();
+        if entries.len() == 1 {
+            let Some((value, _chance)) = entries.pop() else {
+                unreachable!()
+            };
+            (fun)(value)
+        } else {
+            // Note: This does not deduplicate
+            let reduced = entries
+                .into_iter()
+                .flat_map(|(entry, chance)| {
+                    let mapped = (fun)(entry);
+                    mapped
+                        .entries
+                        .into_iter()
+                        .map(move |(v, inner)| (v, inner * chance))
+                })
+                .collect();
 
-        Distribution { entries: reduced }
+            Distribution { entries: reduced }
+        }
     }
 }

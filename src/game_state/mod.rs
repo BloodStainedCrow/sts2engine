@@ -1,13 +1,13 @@
-use std::ops::{Deref, DerefMut};
-use std::{array, cmp::max, os::linux::raw::stat};
+use std::cmp::max;
 
 use enum_map::{Enum, EnumMap};
 use itertools::Itertools;
-use rapidhash::fast::RapidHasher;
 use std::hash::Hash;
-use std::hash::Hasher;
 
+use crate::game_state::cards::{Card, CardPrototype, Cost, CostVal, LegalTarget, UnorderedCardSet};
 use crate::{combat_action::CombatAction, distribution::Distribution};
+
+pub(crate) mod cards;
 
 struct RunState {}
 
@@ -39,7 +39,143 @@ enum CharacterIndex {
     Enemy(usize),
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum EncounterPrototype {
+    FuzzyWurmCrawler,
+    SingleNibbit,
+    SlimesWeak,
+    ShrinkerBeetle,
+}
+
+// TODO:
+pub struct RunInfo {
+    pub hp: u16,
+    pub deck: Vec<Card>,
+}
+
 impl CombatState {
+    pub(crate) fn get_starting_states(
+        encounter: EncounterPrototype,
+        run_info: &RunInfo,
+    ) -> Distribution<Self> {
+        let state = Distribution::single_value(Self {
+            turn_counter: 0,
+            player: Player {
+                hand: UnorderedCardSet::from(vec![]),
+                draw_pile: run_info.deck.clone().into(),
+                draw_pile_top_card: None,
+                discard_pile: UnorderedCardSet::from(vec![]),
+                exhaust_pile: UnorderedCardSet::from(vec![]),
+                orbs: vec![],
+                num_orb_slots: 1,
+                energy: 0,
+                stars: 0,
+                creature: Creature {
+                    hp: run_info.hp,
+                    max_hp: 70,
+                    block: 0,
+                    statuses: EnumMap::default(),
+                },
+            },
+            enemies: vec![],
+        });
+
+        assert!(state.entries.iter().map(|(v, _)| v).all_unique());
+
+        let state_with_enemy = match encounter {
+            EncounterPrototype::FuzzyWurmCrawler => {
+                let hp = 55..=57;
+
+                let state = state.flat_map(|state| {
+                    Distribution::equal_chance(hp.clone().map(|hp| {
+                        let mut state = state.clone();
+
+                        state.enemies.push(Enemy {
+                            prototype: EnemyPrototype::FuzzyWurmCrawler,
+                            creature: Creature {
+                                hp,
+                                max_hp: hp,
+                                block: 0,
+                                statuses: EnumMap::default(),
+                            },
+                            has_acted_this_turn: false,
+                            state_machine: EnemyStateMachine { current_state: 0 },
+                        });
+
+                        state
+                    }))
+                });
+
+                state
+            }
+            EncounterPrototype::SingleNibbit => {
+                let hp = 42..=46;
+
+                let state = state.flat_map(|state| {
+                    Distribution::equal_chance(hp.clone().map(|hp| {
+                        let mut state = state.clone();
+
+                        state.enemies.push(Enemy {
+                            prototype: EnemyPrototype::Nibbit,
+                            creature: Creature {
+                                hp,
+                                max_hp: hp,
+                                block: 0,
+                                statuses: EnumMap::default(),
+                            },
+                            has_acted_this_turn: false,
+                            state_machine: EnemyStateMachine { current_state: 0 },
+                        });
+
+                        state
+                    }))
+                });
+
+                state
+            }
+            EncounterPrototype::SlimesWeak => todo!(),
+            EncounterPrototype::ShrinkerBeetle => {
+                let hp = 38..=40;
+
+                let state = state.flat_map(|state| {
+                    Distribution::equal_chance(hp.clone().map(|hp| {
+                        let mut state = state.clone();
+
+                        state.enemies.push(Enemy {
+                            prototype: EnemyPrototype::ShrinkerBeetle,
+                            creature: Creature {
+                                hp,
+                                max_hp: hp,
+                                block: 0,
+                                statuses: EnumMap::default(),
+                            },
+                            has_acted_this_turn: false,
+                            state_machine: EnemyStateMachine { current_state: 0 },
+                        });
+
+                        state
+                    }))
+                });
+
+                state
+            }
+        };
+
+        assert!(state_with_enemy.entries.iter().map(|(v, _)| v).all_unique());
+
+        let state = state_with_enemy.flat_map(Self::on_start_turn);
+
+        assert!(state.entries.iter().map(|(v, _)| v).all_unique());
+        assert!(!state.entries.is_empty());
+
+        let state = state.flat_map(Self::draw_cards_for_turn);
+
+        assert!(state.entries.iter().map(|(v, _)| v).all_unique());
+        assert!(!state.entries.is_empty());
+
+        state
+    }
+
     pub(crate) const fn get_post_game_state(&self) -> Option<PostCombatState> {
         if self.enemies.is_empty() {
             Some(PostCombatState {
@@ -127,8 +263,7 @@ impl CombatState {
             CombatAction::PlayCard { card, target } => {
                 let mut result = self.clone();
 
-                let index = result.player.hand.iter().position(|v| *v == card).unwrap();
-                let card = result.player.hand.remove(index);
+                result.player.hand.remove_card(card);
 
                 // FIXME: state effects on cost
                 let cost = card.get_cost();
@@ -167,6 +302,7 @@ impl CombatState {
         Distribution::single_value(self)
     }
 
+    #[allow(clippy::match_same_arms)]
     fn end_turn(mut self) -> Distribution<Self> {
         // TODO: Check the order
 
@@ -176,11 +312,36 @@ impl CombatState {
 
         // TODO: Orbs
 
+        // Apply effect of statuses on enemies
+        for enemy in &mut self.enemies {
+            for (status, count) in &mut enemy.creature.statuses {
+                match status {
+                    Status::Strength => {}
+                    Status::Dexterity => {}
+                    Status::Vulnerable => {}
+                    Status::Weak => {}
+                    Status::Artifact => {}
+                    Status::Frail => {}
+                    Status::Focus => {}
+                    Status::Vigor => {}
+                    Status::Poison => {
+                        enemy.creature.hp = enemy.creature.hp.saturating_sub_signed(*count);
+                    }
+                    Status::BonusEnergyOnTurnStart => {
+                        assert!(*count == 0);
+                    }
+                    Status::Shrink => {}
+                }
+            }
+            // Remove enemy block
+            enemy.creature.block = 0;
+        }
+
         // Enemy actions
         let mut state = Distribution::single_value(self);
 
         loop {
-            let mut did_attack = false;
+            let mut did_act = false;
             state = state.flat_map(|mut state| {
                 let enemy = state
                     .enemies
@@ -190,31 +351,54 @@ impl CombatState {
                 if let Some((index, enemy)) = enemy {
                     enemy.has_acted_this_turn = true;
 
-                    let enemy_actions = enemy.prototype.get_moveset();
+                    let action = enemy.prototype.get_moveset().eval(&enemy.state_machine);
 
-                    let (base_damage, status_change) = match enemy_actions {
-                        EnemyMoveSet::ConstantRotation { rotation } => (
-                            rotation[enemy.state_machine.current_state].attack.0,
-                            rotation[enemy.state_machine.current_state].apply_status_self,
-                        ),
-                    };
+                    did_act = true;
 
-                    did_attack = true;
-                    let state = state.apply_attack_damage(
-                        CharacterIndex::Enemy(index),
-                        base_damage,
-                        CharacterIndex::Player,
-                    );
+                    let mut state = Distribution::single_value(state);
+                    for action in action.actions {
+                        state = match action {
+                            EnemyAction::Attack {
+                                base_damage,
+                                repeat,
+                            } => state.flat_map(|state| {
+                                state.apply_attack_damage(
+                                    CharacterIndex::Enemy(index),
+                                    *base_damage,
+                                    CharacterIndex::Player,
+                                )
+                            }),
+                            EnemyAction::Block { amount } => state.flat_map(|state| {
+                                state.add_block_to_creature(CharacterIndex::Enemy(index), *amount)
+                            }),
+                            EnemyAction::ApplyStatusSelf { status, diff } => {
+                                state.flat_map(|state| {
+                                    state.apply_status_change(
+                                        CharacterIndex::Enemy(index),
+                                        *status,
+                                        *diff,
+                                    )
+                                })
+                            }
+                            EnemyAction::ApplyStatusPlayer { status, diff } => {
+                                state.flat_map(|state| {
+                                    state.apply_status_change(
+                                        CharacterIndex::Player,
+                                        *status,
+                                        *diff,
+                                    )
+                                })
+                            }
+                        };
+                    }
 
-                    state.flat_map(|state| {
-                        state.apply_statuses(CharacterIndex::Enemy(index), status_change)
-                    })
+                    state
                 } else {
                     Distribution::single_value(state)
                 }
             });
 
-            if !did_attack {
+            if !did_act {
                 break;
             }
         }
@@ -222,12 +406,10 @@ impl CombatState {
         // Next enemy intents
         let state = state.map(|mut state| {
             for enemy in &mut state.enemies {
-                match enemy.prototype.get_moveset() {
-                    EnemyMoveSet::ConstantRotation { rotation } => {
-                        enemy.state_machine.current_state += 1;
-                        enemy.state_machine.current_state %= rotation.len();
-                    }
-                }
+                enemy
+                    .prototype
+                    .get_moveset()
+                    .advance(&mut enemy.state_machine);
 
                 enemy.has_acted_this_turn = false;
             }
@@ -237,27 +419,40 @@ impl CombatState {
 
         let state = state.flat_map(Self::on_start_turn);
 
+        assert!(!state.entries.is_empty());
+
         let state = state.flat_map(Self::draw_cards_for_turn);
+
+        assert!(!state.entries.is_empty());
 
         state
     }
 
     fn draw_cards_for_turn(self) -> Distribution<Self> {
         // TODO:
-        let num_cards = 5;
+        let mut num_cards = 5;
+
+        // FIXME: Implement relics
+        if self.turn_counter == 0 {
+            num_cards += 2;
+        }
 
         let mut res = Distribution::single_value(self);
 
         for _ in 0..num_cards {
+            assert!(!res.entries.is_empty());
             res = res.flat_map(Self::draw_single_card);
         }
+
+        // This will produce lots of duplicated entries. Do reduce future work we dedup immediately
+        res.dedup();
 
         res
     }
 
     fn draw_single_card(mut self) -> Distribution<Self> {
         let state = if let Some(top_card) = self.player.draw_pile_top_card.take() {
-            self.player.hand.push(top_card);
+            self.player.hand.add_card(top_card);
             Distribution::single_value(self)
         } else if self.player.draw_pile.is_empty() {
             if self.player.discard_pile.is_empty() {
@@ -282,12 +477,13 @@ impl CombatState {
 
             Distribution::from_duplicates(cards.into_iter().map(|(card, count)| {
                 let mut new = self.clone();
-                let drawn_card_index = new.player.draw_pile.iter().position(|c| c == card).unwrap();
-                let drawn_card = new.player.draw_pile.swap_remove(drawn_card_index);
-                new.player.hand.push(drawn_card);
+                new.player.draw_pile.remove_card(*card);
+                new.player.hand.add_card(*card);
                 (new, count)
             }))
         };
+
+        assert!(!state.entries.is_empty());
 
         state.flat_map(Self::on_draw_card)
     }
@@ -296,7 +492,7 @@ impl CombatState {
     fn on_start_turn(mut self) -> Distribution<Self> {
         // TODO:
 
-        // Apply effect of statuses
+        // Apply effect of statuses on the player
         for (status, count) in &mut self.player.creature.statuses {
             match status {
                 Status::Strength => {}
@@ -307,15 +503,23 @@ impl CombatState {
                 Status::Frail => {}
                 Status::Focus => {}
                 Status::Vigor => {}
+                Status::Poison => {
+                    self.player.creature.hp = self.player.creature.hp.saturating_sub_signed(*count);
+                }
                 Status::BonusEnergyOnTurnStart => {
                     self.player.energy += u8::try_from(*count).unwrap();
                 }
+                Status::Shrink => {}
             }
         }
 
         // Give Player Energy
         // FIXME: Calculate the amount of energy to give
         self.player.energy += 3;
+
+        // Remove player block
+        // TODO: Keep block power
+        self.player.creature.block = 0;
 
         self.apply_end_of_turn_status_changes()
     }
@@ -331,11 +535,13 @@ impl CombatState {
                 Status::Dexterity => {}
                 Status::Vulnerable => decrease_non_neg(count),
                 Status::Weak => decrease_non_neg(count),
+                Status::Poison => decrease_non_neg(count),
                 Status::Artifact => {}
                 Status::Frail => decrease_non_neg(count),
                 Status::Focus => {}
                 Status::Vigor => {}
                 Status::BonusEnergyOnTurnStart => {}
+                Status::Shrink => {}
             }
         }
 
@@ -346,11 +552,13 @@ impl CombatState {
                     Status::Dexterity => {}
                     Status::Vulnerable => decrease_non_neg(count),
                     Status::Weak => decrease_non_neg(count),
+                    Status::Poison => decrease_non_neg(count),
                     Status::Artifact => {}
                     Status::Frail => decrease_non_neg(count),
                     Status::Focus => {}
                     Status::Vigor => {}
                     Status::BonusEnergyOnTurnStart => {}
+                    Status::Shrink => {}
                 }
             }
         }
@@ -358,13 +566,7 @@ impl CombatState {
         Distribution::single_value(self)
     }
 
-    fn on_draw_card(mut self) -> Distribution<Self> {
-        let drawn_card = self
-            .player
-            .hand
-            .last()
-            .expect("We just drew a card, why is our hand empty???");
-
+    fn on_draw_card(self) -> Distribution<Self> {
         // Stuff like kingly kick (I think that gets cheaper when you draw it)
 
         Distribution::single_value(self)
@@ -404,7 +606,7 @@ impl CombatState {
                 assert!(target.is_none());
                 let base_amount = if card.upgraded { 8 } else { 5 };
 
-                state.flat_map(|slf| slf.add_armor_to_player(base_amount))
+                state.flat_map(|slf| slf.add_block_to_creature(CharacterIndex::Player, base_amount))
             }
             CardPrototype::Neutralize => {
                 let target = target.unwrap();
@@ -433,28 +635,87 @@ impl CombatState {
                 // FIXME: Add discard
                 let base_amount = if card.upgraded { 11 } else { 8 };
 
-                state.flat_map(|slf| slf.add_armor_to_player(base_amount))
+                state.flat_map(|slf| slf.add_block_to_creature(CharacterIndex::Player, base_amount))
+            }
+            CardPrototype::PoisonedStab => {
+                let target = target.unwrap();
+                let base_amount = if card.upgraded { 8 } else { 6 };
+
+                // FIXME: If the enemy die, the index will shift....
+                let state = state.flat_map(|state| {
+                    state.apply_attack_damage(
+                        CharacterIndex::Player,
+                        base_amount,
+                        CharacterIndex::Enemy(target),
+                    )
+                });
+
+                state.flat_map(|state| {
+                    state.apply_status_to_enemy(
+                        target,
+                        Status::Poison,
+                        if card.upgraded { 4 } else { 3 },
+                    )
+                })
+            }
+            CardPrototype::Backflip => {
+                assert!(target.is_none());
+                let base_amount = if card.upgraded { 8 } else { 5 };
+
+                let mut state = state
+                    .flat_map(|slf| slf.add_block_to_creature(CharacterIndex::Player, base_amount));
+
+                let cards = 2;
+
+                for _ in 0..cards {
+                    state = state.flat_map(CombatState::draw_single_card);
+                }
+                state.dedup();
+                state
+            }
+            CardPrototype::DeadlyPoison => {
+                let target = target.unwrap();
+
+                state.flat_map(|state| {
+                    state.apply_status_to_enemy(
+                        target,
+                        Status::Poison,
+                        if card.upgraded { 7 } else { 5 },
+                    )
+                })
             }
         };
 
         let state = state.flat_map(Self::on_any_card_played);
         state.map(|mut state| {
-            state.player.discard_pile.push(card.clone());
+            state.player.discard_pile.add_card(card);
             state
         })
     }
 
-    fn add_armor_to_player(mut self, base_amount: u16) -> Distribution<Self> {
-        let amount =
-            base_amount.saturating_add_signed(self.player.creature.statuses[Status::Dexterity]);
+    fn add_block_to_creature(
+        mut self,
+        creature: CharacterIndex,
+        base_amount: u16,
+    ) -> Distribution<Self> {
+        let status = match creature {
+            CharacterIndex::Player => &mut self.player.creature.statuses,
+            CharacterIndex::Enemy(index) => &mut self.enemies[index].creature.statuses,
+        };
 
-        let amount = if self.player.creature.statuses[Status::Frail] > 0 {
+        let amount = base_amount.saturating_add_signed(status[Status::Dexterity]);
+
+        let amount = if status[Status::Frail] > 0 {
             (amount as f32 * 0.75) as u16
         } else {
             amount
         };
 
-        self.player.creature.block += amount;
+        match creature {
+            CharacterIndex::Player => self.player.creature.block += amount,
+            CharacterIndex::Enemy(index) => self.enemies[index].creature.block += amount,
+        }
+
         // TODO: Triggers
 
         Distribution::single_value(self)
@@ -473,12 +734,18 @@ impl CombatState {
 
         let amount = base_amount.saturating_add_signed(source_status[Status::Strength]);
 
-        // Use up the players vigor
+        // Use up vigor
         let amount = amount.saturating_add_signed(source_status[Status::Vigor]);
         source_status[Status::Vigor] = 0;
 
-        let amount = if self.player.creature.statuses[Status::Weak] > 0 {
+        let amount = if source_status[Status::Weak] > 0 {
             (amount as f32 * 0.75) as u16
+        } else {
+            amount
+        };
+
+        let amount = if source_status[Status::Shrink] > 0 {
+            (amount as f32 * 0.7) as u16
         } else {
             amount
         };
@@ -538,19 +805,18 @@ impl CombatState {
         Distribution::single_value(self)
     }
 
-    fn apply_statuses(
+    fn apply_status_change(
         mut self,
         target: CharacterIndex,
-        status_change: EnumMap<Status, i16>,
+        status: Status,
+        diff: i16,
     ) -> Distribution<Self> {
-        let status = match target {
+        let status_list = match target {
             CharacterIndex::Player => &mut self.player.creature.statuses,
             CharacterIndex::Enemy(index) => &mut self.enemies[index].creature.statuses,
         };
 
-        for (val, change) in status.values_mut().zip(status_change.into_values()) {
-            *val += change;
-        }
+        status_list[status] += diff;
 
         Distribution::single_value(self)
     }
@@ -615,54 +881,6 @@ impl Default for Player {
     }
 }
 
-#[derive(Debug, Clone, Eq, Default)]
-pub struct UnorderedCardSet {
-    cards: Vec<Card>,
-}
-
-impl From<Vec<Card>> for UnorderedCardSet {
-    fn from(value: Vec<Card>) -> Self {
-        Self { cards: value }
-    }
-}
-
-impl PartialEq for UnorderedCardSet {
-    fn eq(&self, other: &Self) -> bool {
-        self.cards.iter().counts() == other.cards.iter().counts()
-        // self.cards == other.cards
-    }
-}
-
-impl Deref for UnorderedCardSet {
-    type Target = Vec<Card>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.cards
-    }
-}
-
-impl DerefMut for UnorderedCardSet {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.cards
-    }
-}
-
-impl Hash for UnorderedCardSet {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        let mut res: u64 = 1;
-        for card in &self.cards {
-            let mut card_hasher = RapidHasher::default_const();
-
-            card.hash(&mut card_hasher);
-            let card_hash = card_hasher.finish();
-
-            res = res.wrapping_add(card_hash);
-        }
-        res.hash(state);
-        // self.cards.hash(state);
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum Orb {
     Lightning,
@@ -691,12 +909,21 @@ pub struct Creature {
     pub statuses: enum_map::EnumMap<Status, i16>,
 }
 
-#[derive(Debug, Clone, Copy, Enum, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Enum, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all(deserialize = "SCREAMING_SNAKE_CASE"))]
 pub enum Status {
+    #[serde(rename = "STRENGTH_POWER")]
     Strength,
+    #[serde(rename = "DEXTERITY_POWER")]
     Dexterity,
+    #[serde(rename = "VULNERABLE_POWER")]
     Vulnerable,
+    #[serde(rename = "WEAK_POWER")]
     Weak,
+    #[serde(rename = "POISON_POWER")]
+    Poison,
+    #[serde(rename = "SHRINK_POWER")]
+    Shrink,
     Artifact,
     Frail,
     Focus,
@@ -715,72 +942,56 @@ pub enum EnemyMoveSet {
         // rotation: &'static [EnemyMove],
         rotation: Vec<EnemyMove>,
     },
+    Prefix {
+        prefixed_move: EnemyMove,
+        after: Box<Self>,
+    },
 }
 
-pub struct EnemyMove {
-    pub attack: (u16, u16),
-    block: u8,
-    apply_status_self: EnumMap<Status, i16>,
-    apply_status_player: EnumMap<Status, i16>,
-}
-
-const STATUS_MOVE_MAPS: EnumMap<Status, fn(i16) -> EnumMap<Status, i16>> = EnumMap::from_array([
-    |amount| {
-        let mut v = EnumMap::from_array([0; _]);
-        v[Status::Strength] = amount;
-        v
-    },
-    |amount| {
-        let mut v = EnumMap::from_array([0; _]);
-        v[Status::Dexterity] = amount;
-        v
-    },
-    |amount| {
-        let mut v = EnumMap::from_array([0; _]);
-        v[Status::Vulnerable] = amount;
-        v
-    },
-    |amount| {
-        let mut v = EnumMap::from_array([0; _]);
-        v[Status::Weak] = amount;
-        v
-    },
-    |amount| {
-        let mut v = EnumMap::from_array([0; _]);
-        v[Status::Artifact] = amount;
-        v
-    },
-    |amount| {
-        let mut v = EnumMap::from_array([0; _]);
-        v[Status::Frail] = amount;
-        v
-    },
-    |amount| {
-        let mut v = EnumMap::from_array([0; _]);
-        v[Status::Focus] = amount;
-        v
-    },
-    |amount| {
-        let mut v = EnumMap::from_array([0; _]);
-        v[Status::Vigor] = amount;
-        v
-    },
-    |amount| {
-        let mut v = EnumMap::from_array([0; _]);
-        v[Status::BonusEnergyOnTurnStart] = amount;
-        v
-    },
-]);
-
-impl EnemyMove {
-    const fn default() -> Self {
-        Self {
-            attack: (0, 0),
-            block: 0,
-            apply_status_self: EnumMap::from_array([0; _]),
-            apply_status_player: EnumMap::from_array([0; _]),
+impl EnemyMoveSet {
+    pub fn eval(&self, state_machine: &EnemyStateMachine) -> EnemyMove {
+        match self {
+            EnemyMoveSet::ConstantRotation { rotation } => {
+                rotation[state_machine.current_state % rotation.len()]
+            }
+            EnemyMoveSet::Prefix {
+                prefixed_move,
+                after,
+            } => {
+                if state_machine.current_state == 0 {
+                    *prefixed_move
+                } else {
+                    after.eval(&EnemyStateMachine {
+                        current_state: state_machine.current_state - 1,
+                    })
+                }
+            }
         }
     }
+
+    fn advance(&self, state_machine: &mut EnemyStateMachine) {
+        match self {
+            Self::ConstantRotation { .. } => {
+                state_machine.current_state += 1;
+            }
+            Self::Prefix { .. } => {
+                state_machine.current_state += 1;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct EnemyMove {
+    pub actions: &'static [EnemyAction],
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum EnemyAction {
+    Attack { base_damage: u16, repeat: u16 },
+    Block { amount: u16 },
+    ApplyStatusSelf { status: Status, diff: i16 },
+    ApplyStatusPlayer { status: Status, diff: i16 },
 }
 
 impl EnemyStateMachine {
@@ -791,8 +1002,10 @@ impl EnemyStateMachine {
 
 enum Intent {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Deserialize)]
+#[serde(rename_all(deserialize = "SCREAMING_SNAKE_CASE"))]
 pub enum EnemyPrototype {
+    Nibbit,
     SmallTwigSlime,
     MediumTwigSlime,
     SmallLeafSlime,
@@ -804,26 +1017,59 @@ pub enum EnemyPrototype {
 impl EnemyPrototype {
     pub fn get_moveset(self) -> EnemyMoveSet {
         match self {
+            Self::Nibbit => EnemyMoveSet::ConstantRotation {
+                rotation: vec![
+                    EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 12,
+                            repeat: 1,
+                        }],
+                    },
+                    EnemyMove {
+                        actions: &[
+                            EnemyAction::Attack {
+                                base_damage: 6,
+                                repeat: 1,
+                            },
+                            EnemyAction::Block { amount: 5 },
+                        ],
+                    },
+                    EnemyMove {
+                        actions: &[EnemyAction::ApplyStatusSelf {
+                            status: Status::Strength,
+                            diff: 2,
+                        }],
+                    },
+                ],
+            },
             Self::FuzzyWurmCrawler => EnemyMoveSet::ConstantRotation {
                 rotation: vec![
                     EnemyMove {
-                        attack: (4, 1),
-                        ..EnemyMove::default()
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 4,
+                            repeat: 1,
+                        }],
                     },
                     EnemyMove {
-                        apply_status_self: STATUS_MOVE_MAPS[Status::Strength](7),
-                        ..EnemyMove::default()
+                        actions: &[EnemyAction::ApplyStatusSelf {
+                            status: Status::Strength,
+                            diff: 7,
+                        }],
                     },
                     EnemyMove {
-                        attack: (4, 1),
-                        ..EnemyMove::default()
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 4,
+                            repeat: 1,
+                        }],
                     },
                 ],
             },
             Self::SmallTwigSlime => EnemyMoveSet::ConstantRotation {
                 rotation: vec![EnemyMove {
-                    attack: (4, 1),
-                    ..EnemyMove::default()
+                    actions: &[EnemyAction::Attack {
+                        base_damage: 4,
+                        repeat: 1,
+                    }],
                 }],
             },
             Self::MediumTwigSlime => todo!(),
@@ -831,127 +1077,46 @@ impl EnemyPrototype {
             Self::MediumLeafSlime => EnemyMoveSet::ConstantRotation {
                 rotation: vec![
                     EnemyMove {
-                        // TODO: Status cards
-                        ..EnemyMove::default()
+                        actions: &[EnemyAction::ApplyStatusSelf {
+                            status: Status::Strength,
+                            diff: 0,
+                        }],
                     },
                     EnemyMove {
-                        attack: (8, 1),
-                        ..EnemyMove::default()
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 8,
+                            repeat: 1,
+                        }],
                     },
                 ],
             },
 
-            Self::ShrinkerBeetle => todo!(),
+            Self::ShrinkerBeetle => EnemyMoveSet::Prefix {
+                prefixed_move: EnemyMove {
+                    actions: &[EnemyAction::ApplyStatusPlayer {
+                        status: Status::Shrink,
+                        diff: 1,
+                    }],
+                },
+                after: Box::new(EnemyMoveSet::ConstantRotation {
+                    rotation: vec![
+                        EnemyMove {
+                            actions: &[EnemyAction::Attack {
+                                base_damage: 7,
+                                repeat: 1,
+                            }],
+                        },
+                        EnemyMove {
+                            actions: &[EnemyAction::Attack {
+                                base_damage: 13,
+                                repeat: 1,
+                            }],
+                        },
+                    ],
+                }),
+            },
         }
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Card {
-    pub prototype: CardPrototype,
-    upgraded: bool,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct Cost {
-    energy: CostVal,
-    stars: CostVal,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum CostVal {
-    X,
-    Val(u8),
-}
-
-const ENERGY: [Cost; 5] = [
-    Cost {
-        energy: CostVal::Val(0),
-        stars: CostVal::Val(0),
-    },
-    Cost {
-        energy: CostVal::Val(1),
-        stars: CostVal::Val(0),
-    },
-    Cost {
-        energy: CostVal::Val(2),
-        stars: CostVal::Val(0),
-    },
-    Cost {
-        energy: CostVal::Val(3),
-        stars: CostVal::Val(0),
-    },
-    Cost {
-        energy: CostVal::Val(4),
-        stars: CostVal::Val(0),
-    },
-];
-
-impl Card {
-    #[allow(clippy::match_same_arms)]
-    const fn get_cost(&self) -> Cost {
-        match (self.prototype, self.upgraded) {
-            (CardPrototype::Strike, _) => ENERGY[1],
-            (CardPrototype::Defend, _) => ENERGY[1],
-            (CardPrototype::Neutralize, _) => ENERGY[0],
-            (CardPrototype::Survivor, _) => ENERGY[1],
-        }
-    }
-
-    #[allow(clippy::match_same_arms)]
-    fn get_legal_targets(&self) -> impl Iterator<Item = LegalTarget> {
-        match self.prototype {
-            CardPrototype::Strike => [LegalTarget::Enemy],
-            CardPrototype::Defend => [LegalTarget::OwnPlayer],
-            CardPrototype::Neutralize => [LegalTarget::Enemy],
-            CardPrototype::Survivor => [LegalTarget::OwnPlayer],
-        }
-        .into_iter()
-    }
-}
-
-enum LegalTarget {
-    OwnPlayer,
-    OtherPlayer,
-    Enemy,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum CardPrototype {
-    Strike,
-    Defend,
-    Neutralize,
-    Survivor,
-}
-
-impl CardPrototype {
-    const fn get_normal_card(self) -> Card {
-        Card {
-            prototype: self,
-            upgraded: false,
-        }
-    }
-
-    #[allow(clippy::enum_glob_use)]
-    #[allow(clippy::match_same_arms)]
-    pub const fn get_kind(self) -> CardKind {
-        use CardKind::*;
-        match self {
-            Self::Strike => Attack,
-            Self::Defend => Skill,
-            Self::Neutralize => Attack,
-            Self::Survivor => Skill,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum CardKind {
-    Attack,
-    Skill,
-    Power,
-    Status,
-    Curse,
 }
 
 fn decrease_non_neg(val: &mut i16) {
@@ -981,7 +1146,7 @@ pub(crate) mod test {
                         hp: 55,
                         max_hp: 55,
                         block: 0,
-                        statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                        statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                     },
                     state_machine: EnemyStateMachine { current_state: 0 },
 
@@ -993,7 +1158,7 @@ pub(crate) mod test {
                         hp: 55,
                         max_hp: 55,
                         block: 0,
-                        statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                        statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                     },
                     state_machine: EnemyStateMachine { current_state: 2 },
 
@@ -1009,65 +1174,61 @@ pub(crate) mod test {
         CombatState {
             turn_counter: 2,
             player: Player {
-                hand: UnorderedCardSet {
-                    cards: vec![
-                        Card {
-                            prototype: Neutralize,
-                            upgraded: false,
-                        },
-                        Card {
-                            prototype: Survivor,
-                            upgraded: false,
-                        },
-                        Card {
-                            prototype: Strike,
-                            upgraded: false,
-                        },
-                        Card {
-                            prototype: Strike,
-                            upgraded: false,
-                        },
-                        Card {
-                            prototype: Strike,
-                            upgraded: false,
-                        },
-                    ],
-                },
-                draw_pile: UnorderedCardSet {
-                    cards: vec![
-                        Card {
-                            prototype: Defend,
-                            upgraded: false,
-                        },
-                        Card {
-                            prototype: Defend,
-                            upgraded: false,
-                        },
-                        Card {
-                            prototype: Strike,
-                            upgraded: false,
-                        },
-                        Card {
-                            prototype: Defend,
-                            upgraded: false,
-                        },
-                        Card {
-                            prototype: Defend,
-                            upgraded: false,
-                        },
-                        Card {
-                            prototype: Defend,
-                            upgraded: false,
-                        },
-                        Card {
-                            prototype: Strike,
-                            upgraded: false,
-                        },
-                    ],
-                },
+                hand: UnorderedCardSet::from(vec![
+                    Card {
+                        prototype: Neutralize,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Survivor,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Strike,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Strike,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Strike,
+                        upgraded: false,
+                    },
+                ]),
+                draw_pile: UnorderedCardSet::from(vec![
+                    Card {
+                        prototype: Defend,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Defend,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Strike,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Defend,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Defend,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Defend,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Strike,
+                        upgraded: false,
+                    },
+                ]),
                 draw_pile_top_card: None,
-                discard_pile: UnorderedCardSet { cards: vec![] },
-                exhaust_pile: UnorderedCardSet { cards: vec![] },
+                discard_pile: UnorderedCardSet::from(vec![]),
+                exhaust_pile: UnorderedCardSet::from(vec![]),
                 orbs: vec![],
                 num_orb_slots: 1,
                 energy: 3,
@@ -1076,7 +1237,7 @@ pub(crate) mod test {
                     hp: 62,
                     max_hp: 70,
                     block: 6,
-                    statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                 },
             },
             enemies: vec![
@@ -1086,7 +1247,7 @@ pub(crate) mod test {
                         hp: 55,
                         max_hp: 55,
                         block: 0,
-                        statuses: EnumMap::from_array([7, 0, 0, 0, 0, 0, 0, 0, 0]),
+                        statuses: EnumMap::from_array([7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine { current_state: 2 },
@@ -1097,12 +1258,100 @@ pub(crate) mod test {
                         hp: 31,
                         max_hp: 55,
                         block: 0,
-                        statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                        statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine { current_state: 1 },
                 },
             ],
+        }
+    }
+
+    pub fn unneeded_blocking() -> CombatState {
+        use crate::game_state::CardPrototype::*;
+        use crate::game_state::EnemyPrototype::*;
+        CombatState {
+            turn_counter: 1,
+            player: Player {
+                hand: vec![
+                    Card {
+                        prototype: Defend,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Strike,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Survivor,
+                        upgraded: false,
+                    },
+                ]
+                .into(),
+                draw_pile: vec![].into(),
+                draw_pile_top_card: None,
+                discard_pile: vec![
+                    Card {
+                        prototype: Neutralize,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Defend,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Defend,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Defend,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Defend,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Strike,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Strike,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Strike,
+                        upgraded: false,
+                    },
+                    Card {
+                        prototype: Strike,
+                        upgraded: false,
+                    },
+                ]
+                .into(),
+                exhaust_pile: vec![].into(),
+                orbs: vec![],
+                num_orb_slots: 1,
+                energy: 1,
+                stars: 0,
+                creature: Creature {
+                    hp: 66,
+                    max_hp: 70,
+                    block: 0,
+                    statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                },
+            },
+            enemies: vec![Enemy {
+                prototype: FuzzyWurmCrawler,
+                creature: Creature {
+                    hp: 42,
+                    max_hp: 57,
+                    block: 0,
+                    statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                },
+                has_acted_this_turn: false,
+                state_machine: EnemyStateMachine { current_state: 1 },
+            }],
         }
     }
 
@@ -1136,7 +1385,7 @@ pub(crate) mod test {
                     hp: 55,
                     max_hp: 55,
                     block: 0,
-                    statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                 },
                 state_machine: EnemyStateMachine { current_state: 2 },
 
@@ -1148,54 +1397,35 @@ pub(crate) mod test {
     #[test]
     fn equality_for_card_sets() {
         assert_eq!(
-            UnorderedCardSet {
-                cards: vec![CardPrototype::Strike.get_normal_card()]
-            },
-            UnorderedCardSet {
-                cards: vec![CardPrototype::Strike.get_normal_card()]
-            }
+            UnorderedCardSet::from(vec![CardPrototype::Strike.get_normal_card()]),
+            UnorderedCardSet::from(vec![CardPrototype::Strike.get_normal_card()]),
         );
 
         assert_ne!(
-            UnorderedCardSet {
-                cards: vec![CardPrototype::Strike.get_normal_card()]
-            },
-            UnorderedCardSet {
-                cards: vec![CardPrototype::Defend.get_normal_card()]
-            }
+            UnorderedCardSet::from(vec![CardPrototype::Strike.get_normal_card()]),
+            UnorderedCardSet::from(vec![CardPrototype::Defend.get_normal_card()]),
         );
 
         assert_eq!(
-            UnorderedCardSet {
-                cards: vec![
-                    CardPrototype::Strike.get_normal_card(),
-                    CardPrototype::Defend.get_normal_card()
-                ]
-            },
-            UnorderedCardSet {
-                cards: vec![
-                    CardPrototype::Defend.get_normal_card(),
-                    CardPrototype::Strike.get_normal_card()
-                ]
-            }
+            UnorderedCardSet::from(vec![
+                CardPrototype::Strike.get_normal_card(),
+                CardPrototype::Defend.get_normal_card()
+            ]),
+            UnorderedCardSet::from(vec![
+                CardPrototype::Defend.get_normal_card(),
+                CardPrototype::Strike.get_normal_card()
+            ]),
         );
 
         let hash: HashSet<UnorderedCardSet, RandomState> =
-            HashSet::from_iter(iter::once(UnorderedCardSet {
-                cards: vec![
-                    CardPrototype::Strike.get_normal_card(),
-                    CardPrototype::Defend.get_normal_card(),
-                ],
-            }));
+            HashSet::from_iter(iter::once(UnorderedCardSet::from(vec![
+                CardPrototype::Strike.get_normal_card(),
+                CardPrototype::Defend.get_normal_card(),
+            ])));
 
-        assert!(
-            hash.get(&UnorderedCardSet {
-                cards: vec![
-                    CardPrototype::Defend.get_normal_card(),
-                    CardPrototype::Strike.get_normal_card()
-                ]
-            })
-            .is_some()
-        );
+        assert!(hash.contains(&UnorderedCardSet::from(vec![
+            CardPrototype::Defend.get_normal_card(),
+            CardPrototype::Strike.get_normal_card()
+        ])));
     }
 }
