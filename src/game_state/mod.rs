@@ -1,10 +1,13 @@
+use std::borrow::Cow;
 use std::cmp::max;
 
 use enum_map::{Enum, EnumMap};
 use itertools::Itertools;
 use std::hash::Hash;
 
-use crate::game_state::cards::{Card, CardPrototype, Cost, CostVal, LegalTarget, UnorderedCardSet};
+use crate::game_state::cards::{
+    Card, CardKind, CardPrototype, Cost, CostVal, LegalTarget, UnorderedCardSet,
+};
 use crate::{combat_action::CombatAction, distribution::Distribution};
 
 pub(crate) mod cards;
@@ -43,6 +46,7 @@ enum CharacterIndex {
 pub enum EncounterPrototype {
     FuzzyWurmCrawler,
     SingleNibbit,
+    DoubleNibbit,
     SlimesWeak,
     ShrinkerBeetle,
 }
@@ -125,6 +129,43 @@ impl CombatState {
                             },
                             has_acted_this_turn: false,
                             state_machine: EnemyStateMachine { current_state: 0 },
+                        });
+
+                        state
+                    }))
+                });
+
+                state
+            }
+            EncounterPrototype::DoubleNibbit => {
+                let hps = (42..=46).cartesian_product(42..=46);
+
+                let state = state.flat_map(|state| {
+                    Distribution::equal_chance(hps.clone().map(|(first_hp, second_hp)| {
+                        let mut state = state.clone();
+
+                        state.enemies.push(Enemy {
+                            prototype: EnemyPrototype::Nibbit,
+                            creature: Creature {
+                                hp: first_hp,
+                                max_hp: first_hp,
+                                block: 0,
+                                statuses: EnumMap::default(),
+                            },
+                            has_acted_this_turn: false,
+                            state_machine: EnemyStateMachine { current_state: 1 },
+                        });
+
+                        state.enemies.push(Enemy {
+                            prototype: EnemyPrototype::Nibbit,
+                            creature: Creature {
+                                hp: second_hp,
+                                max_hp: second_hp,
+                                block: 0,
+                                statuses: EnumMap::default(),
+                            },
+                            has_acted_this_turn: false,
+                            state_machine: EnemyStateMachine { current_state: 2 },
                         });
 
                         state
@@ -331,6 +372,9 @@ impl CombatState {
                         assert!(*count == 0);
                     }
                     Status::Shrink => {}
+                    Status::CorrosiveWave => {
+                        assert!(*count == 0);
+                    }
                 }
             }
             // Remove enemy block
@@ -445,7 +489,7 @@ impl CombatState {
         }
 
         // This will produce lots of duplicated entries. Do reduce future work we dedup immediately
-        res.dedup();
+        // res.dedup();
 
         res
     }
@@ -510,6 +554,7 @@ impl CombatState {
                     self.player.energy += u8::try_from(*count).unwrap();
                 }
                 Status::Shrink => {}
+                Status::CorrosiveWave => {}
             }
         }
 
@@ -542,6 +587,9 @@ impl CombatState {
                 Status::Vigor => {}
                 Status::BonusEnergyOnTurnStart => {}
                 Status::Shrink => {}
+                Status::CorrosiveWave => {
+                    *count = 0;
+                }
             }
         }
 
@@ -559,6 +607,9 @@ impl CombatState {
                     Status::Vigor => {}
                     Status::BonusEnergyOnTurnStart => {}
                     Status::Shrink => {}
+                    Status::CorrosiveWave => {
+                        assert!(*count == 0);
+                    }
                 }
             }
         }
@@ -569,7 +620,19 @@ impl CombatState {
     fn on_draw_card(self) -> Distribution<Self> {
         // Stuff like kingly kick (I think that gets cheaper when you draw it)
 
-        Distribution::single_value(self)
+        assert!(self.player.creature.statuses[Status::CorrosiveWave] >= 0);
+        let corrosive = self.player.creature.statuses[Status::CorrosiveWave].abs();
+
+        let num_enemies = self.enemies.len();
+        let mut state = Distribution::single_value(self);
+        // TODO: Index shift problems
+        for enemy in 0..num_enemies {
+            state = state.flat_map(|state| {
+                state.apply_status_change(CharacterIndex::Enemy(enemy), Status::Poison, corrosive)
+            });
+        }
+
+        state
     }
 
     fn on_draw_non_draw_phase_card(mut self) -> Distribution<Self> {
@@ -684,13 +747,37 @@ impl CombatState {
                     )
                 })
             }
+            CardPrototype::CorrosiveWave => {
+                assert!(target.is_none());
+                state.flat_map(|state| {
+                    state.apply_status_change(
+                        CharacterIndex::Player,
+                        Status::CorrosiveWave,
+                        if card.upgraded { 4 } else { 3 },
+                    )
+                })
+            }
+            CardPrototype::Footwork => {
+                assert!(target.is_none());
+                state.flat_map(|state| {
+                    state.apply_status_change(
+                        CharacterIndex::Player,
+                        Status::Dexterity,
+                        if card.upgraded { 3 } else { 2 },
+                    )
+                })
+            }
         };
 
         let state = state.flat_map(Self::on_any_card_played);
-        state.map(|mut state| {
-            state.player.discard_pile.add_card(card);
+        if card.prototype.get_kind() == CardKind::Power {
             state
-        })
+        } else {
+            state.map(|mut state| {
+                state.player.discard_pile.add_card(card);
+                state
+            })
+        }
     }
 
     fn add_block_to_creature(
@@ -924,6 +1011,8 @@ pub enum Status {
     Poison,
     #[serde(rename = "SHRINK_POWER")]
     Shrink,
+    #[serde(rename = "CORROSIVE_WAVE_POWER")]
+    CorrosiveWave,
     Artifact,
     Frail,
     Focus,
@@ -1146,7 +1235,7 @@ pub(crate) mod test {
                         hp: 55,
                         max_hp: 55,
                         block: 0,
-                        statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                        statuses: EnumMap::default(),
                     },
                     state_machine: EnemyStateMachine { current_state: 0 },
 
@@ -1158,7 +1247,7 @@ pub(crate) mod test {
                         hp: 55,
                         max_hp: 55,
                         block: 0,
-                        statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                        statuses: EnumMap::default(),
                     },
                     state_machine: EnemyStateMachine { current_state: 2 },
 
@@ -1237,7 +1326,7 @@ pub(crate) mod test {
                     hp: 62,
                     max_hp: 70,
                     block: 6,
-                    statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    statuses: EnumMap::default(),
                 },
             },
             enemies: vec![
@@ -1247,7 +1336,7 @@ pub(crate) mod test {
                         hp: 55,
                         max_hp: 55,
                         block: 0,
-                        statuses: EnumMap::from_array([7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                        statuses: EnumMap::from_array([7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine { current_state: 2 },
@@ -1258,7 +1347,7 @@ pub(crate) mod test {
                         hp: 31,
                         max_hp: 55,
                         block: 0,
-                        statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                        statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine { current_state: 1 },
@@ -1310,7 +1399,7 @@ pub(crate) mod test {
                     hp: 66,
                     max_hp: 70,
                     block: 0,
-                    statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    statuses: EnumMap::default(),
                 },
             },
             enemies: vec![Enemy {
@@ -1319,7 +1408,7 @@ pub(crate) mod test {
                     hp: 47,
                     max_hp: 57,
                     block: 0,
-                    statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    statuses: EnumMap::default(),
                 },
                 has_acted_this_turn: false,
                 state_machine: EnemyStateMachine { current_state: 1 },
@@ -1357,7 +1446,7 @@ pub(crate) mod test {
                     hp: 55,
                     max_hp: 55,
                     block: 0,
-                    statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                    statuses: EnumMap::default(),
                 },
                 state_machine: EnemyStateMachine { current_state: 2 },
 

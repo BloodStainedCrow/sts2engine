@@ -13,6 +13,7 @@ approx = "0.5.1"
 bumpalo = { version = "3.20.2", features = ["allocator_api", "collections"] }
 enum-map = "2.7.3"
 itertools = "0.14.0"
+mimalloc = "0.1.48"
 rand = "0.10.0"
 rapidhash = { version = "4.4.1", features = ["unsafe"] }
 rayon = "1.11.0"

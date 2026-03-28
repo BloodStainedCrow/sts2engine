@@ -152,11 +152,13 @@ impl Card {
             (CardPrototype::PoisonedStab, _) => ENERGY[1],
             (CardPrototype::Backflip, _) => ENERGY[1],
             (CardPrototype::DeadlyPoison, _) => ENERGY[1],
+            (CardPrototype::CorrosiveWave, _) => ENERGY[1],
+            (CardPrototype::Footwork, _) => ENERGY[1],
         }
     }
 
     #[allow(clippy::match_same_arms)]
-    pub fn get_legal_targets(&self) -> impl Iterator<Item = LegalTarget> {
+    pub fn get_legal_targets(self) -> impl Iterator<Item = LegalTarget> {
         match self.prototype {
             CardPrototype::Strike => [LegalTarget::Enemy],
             CardPrototype::Defend => [LegalTarget::OwnPlayer],
@@ -165,9 +167,36 @@ impl Card {
             CardPrototype::PoisonedStab => [LegalTarget::Enemy],
             CardPrototype::Backflip => [LegalTarget::OwnPlayer],
             CardPrototype::DeadlyPoison => [LegalTarget::Enemy],
+            CardPrototype::CorrosiveWave => [LegalTarget::OwnPlayer],
+            CardPrototype::Footwork => [LegalTarget::OwnPlayer],
         }
         .into_iter()
     }
+
+    #[allow(clippy::match_same_arms)]
+    #[allow(clippy::enum_glob_use)]
+    pub fn get_rarity(self) -> Rarity {
+        use Rarity::*;
+        match self.prototype {
+            CardPrototype::Strike => Basic,
+            CardPrototype::Defend => Basic,
+            CardPrototype::Neutralize => Common,
+            CardPrototype::Survivor => Common,
+            CardPrototype::PoisonedStab => Common,
+            CardPrototype::Backflip => Common,
+            CardPrototype::DeadlyPoison => Common,
+            CardPrototype::CorrosiveWave => Rare,
+            CardPrototype::Footwork => Uncommon,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Rarity {
+    Basic,
+    Common,
+    Uncommon,
+    Rare,
 }
 
 pub enum LegalTarget {
@@ -188,6 +217,8 @@ pub enum CardPrototype {
     PoisonedStab,
     Backflip,
     DeadlyPoison,
+    CorrosiveWave,
+    Footwork,
 }
 
 impl CardPrototype {
@@ -210,6 +241,8 @@ impl CardPrototype {
             Self::PoisonedStab => Attack,
             Self::Backflip => Skill,
             Self::DeadlyPoison => Skill,
+            Self::CorrosiveWave => Skill,
+            Self::Footwork => Power,
         }
     }
 }

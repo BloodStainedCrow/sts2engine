@@ -1,6 +1,11 @@
 #![feature(iterator_try_collect)]
 #![feature(allocator_api)]
 
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
+
 use std::{
     thread,
     time::{Duration, Instant},
@@ -28,6 +33,7 @@ struct TestEngineCurrentHp {}
 
 impl EvalResult for f32 {
     const MIN: Self = Self::MIN;
+    const MAX: Self = Self::MAX;
     const ZERO: Self = 0.0;
 }
 
@@ -51,30 +57,31 @@ impl EvaluationFunction for TestEngineCurrentHp {
         // }
 
         let damage_done_per_turn = 10.0;
-        let damage_taken_per_turn_base = 5.0;
+        let damage_taken_per_turn_base =
+            5.0 - combat_state.player.creature.statuses[Status::Dexterity] as f32;
 
         let mut enemies: Vec<_> = combat_state.enemies.iter().collect();
 
-        let incoming_damage: u16 = enemies
-            .iter()
-            .map(|enemy| {
-                let mov = enemy.prototype.get_moveset().eval(&enemy.state_machine);
-                mov.actions
-                    .iter()
-                    .filter_map(|action| match action {
-                        game_state::EnemyAction::Attack {
-                            base_damage,
-                            repeat,
-                        } => Some((*base_damage, *repeat)),
-                        _ => None,
-                    })
-                    .map(|(damage, repeat)| {
-                        damage.saturating_add_signed(enemy.creature.statuses[Status::Strength])
-                            * repeat
-                    })
-                    .sum::<u16>()
-            })
-            .sum();
+        // let incoming_damage: u16 = enemies
+        //     .iter()
+        //     .map(|enemy| {
+        //         let mov = enemy.prototype.get_moveset().eval(&enemy.state_machine);
+        //         mov.actions
+        //             .iter()
+        //             .filter_map(|action| match action {
+        //                 game_state::EnemyAction::Attack {
+        //                     base_damage,
+        //                     repeat,
+        //                 } => Some((*base_damage, *repeat)),
+        //                 _ => None,
+        //             })
+        //             .map(|(damage, repeat)| {
+        //                 damage.saturating_add_signed(enemy.creature.statuses[Status::Strength])
+        //                     * repeat
+        //             })
+        //             .sum::<u16>()
+        //     })
+        //     .sum();
 
         enemies.sort_by_key(|enemy| enemy.creature.hp);
 
@@ -92,9 +99,8 @@ impl EvaluationFunction for TestEngineCurrentHp {
                 * damage_taken_per_turn_base;
         }
 
-        let eval = f32::from(combat_state.player.creature.hp)
-            - damage
-            - f32::from(incoming_damage.saturating_sub(combat_state.player.creature.block));
+        let eval = f32::from(combat_state.player.creature.hp) - damage;
+        // - f32::from(incoming_damage.saturating_sub(combat_state.player.creature.block));
 
         // dbg!(eval);
 
@@ -105,9 +111,9 @@ impl EvaluationFunction for TestEngineCurrentHp {
 fn main() {
     // TODO: Assume specific fight
     let pre_first_turn_state = game_state::CombatState::get_starting_states(
-        game_state::EncounterPrototype::FuzzyWurmCrawler,
+        game_state::EncounterPrototype::DoubleNibbit,
         &RunInfo {
-            hp: 66,
+            hp: 58,
             deck: vec![
                 CardPrototype::Strike.get_normal_card(),
                 CardPrototype::Strike.get_normal_card(),
@@ -121,6 +127,8 @@ fn main() {
                 CardPrototype::Defend.get_normal_card(),
                 CardPrototype::Neutralize.get_normal_card(),
                 CardPrototype::Survivor.get_normal_card(),
+                CardPrototype::CorrosiveWave.get_normal_card(),
+                CardPrototype::Footwork.get_normal_card(),
             ],
         },
     );
@@ -154,28 +162,28 @@ fn main() {
             break;
         };
 
-        if let CombatAction::PlayCard { card, .. } = action
-            && card.prototype.get_kind() == CardKind::Skill
-        {
-            let has_attack = real_state
-                .player
-                .hand
-                .iter()
-                .any(|card| card.prototype.get_kind() == CardKind::Attack);
+        // if let CombatAction::PlayCard { card, .. } = action
+        //     && card.prototype.get_kind() == CardKind::Skill
+        // {
+        //     let has_attack = real_state
+        //         .player
+        //         .hand
+        //         .iter()
+        //         .any(|card| card.prototype.get_kind() == CardKind::Attack);
 
-            let enemy_is_attacking = real_state.enemies[0]
-                .prototype
-                .get_moveset()
-                .eval(&real_state.enemies[0].state_machine)
-                .actions
-                .iter()
-                .any(|action| matches!(action, game_state::EnemyAction::Attack { .. }));
+        //     let enemy_is_attacking = real_state.enemies[0]
+        //         .prototype
+        //         .get_moveset()
+        //         .eval(&real_state.enemies[0].state_machine)
+        //         .actions
+        //         .iter()
+        //         .any(|action| matches!(action, game_state::EnemyAction::Attack { .. }));
 
-            assert!(
-                !has_attack || enemy_is_attacking,
-                "Unneeded defend over attacking in state {real_state:?}"
-            );
-        }
+        //     assert!(
+        //         !has_attack || enemy_is_attacking,
+        //         "Unneeded defend over attacking in state {real_state:?}"
+        //     );
+        // }
 
         state = real_state.apply(action);
         comm.apply_action(action);
@@ -183,6 +191,8 @@ fn main() {
         // After applying the action on the game, we need to wait for stuff to settle (I do not know what the game returns while the animations are playing)
         let start = Instant::now();
         let presumed_done = start + Duration::from_secs(6);
+
+        engine.cull_table(&real_state);
 
         // Use the time on calcs insread of just waiting
         if state.entries.len() == 1 {

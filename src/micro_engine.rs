@@ -1,9 +1,10 @@
 use core::todo;
 use std::{
+    cmp::{max, min},
     collections::HashMap,
     fmt::{Debug, Display},
     iter::Sum,
-    ops::{Add, ControlFlow, Mul},
+    ops::{Add, ControlFlow, Mul, Sub},
     sync::{Arc, atomic::AtomicBool},
     thread,
     time::Duration,
@@ -14,8 +15,7 @@ use rapidhash::{HashMapExt, RapidHashMap};
 
 use crate::{
     combat_action::CombatAction,
-    distribution::Distribution,
-    game_state::{CombatState, PostCombatState, cards::CardKind},
+    game_state::{CombatState, PostCombatState},
 };
 
 #[derive(Debug)]
@@ -23,7 +23,12 @@ pub struct MicroEngine<F: EvaluationFunction> {
     // arena: bumpalo::Bump,
     eval_function: F,
 
-    transposition_table:
+    chance_node_transposition_table: rapidhash::RapidHashMap<
+        (CombatState, CombatAction),
+        TranspositionTableEntry<F::EvalResult>,
+    >,
+
+    choice_node_transposition_table:
         rapidhash::RapidHashMap<CombatState, TranspositionTableEntry<F::EvalResult>>,
 
     stop_signal: Arc<AtomicBool>,
@@ -39,6 +44,7 @@ struct TranspositionTableEntry<EvalResult> {
 #[derive(Debug)]
 enum EvalRunResult<EvalResult> {
     UpperBound(EvalResult),
+    LowerBound(EvalResult),
     Exact {
         eval: EvalResult,
         action: CombatAction,
@@ -46,31 +52,91 @@ enum EvalRunResult<EvalResult> {
 }
 
 pub trait EvaluationFunction {
-    type EvalResult: Debug
-        + Copy
-        + Sum<Self::EvalResult>
-        + Mul<f32, Output = Self::EvalResult>
-        + Add<Self::EvalResult, Output = Self::EvalResult>
-        + EvalResult
-        + PartialOrd
-        + Into<f32>;
+    type EvalResult: Debug + Copy + EvalResult + PartialOrd + Into<f32>;
     fn evaluate_postgame_state(&self, post_combat_state: PostCombatState) -> Self::EvalResult;
     fn best_possible_evaluation(&self, combat_state: &CombatState) -> Self::EvalResult;
     fn expected_evaluation(&self, combat_state: &CombatState) -> Self::EvalResult;
 }
 
-pub trait EvalResult {
+pub trait EvalResult:
+    Sum<Self>
+    + Mul<f32, Output = Self>
+    + PartialEq
+    + Add<Self, Output = Self>
+    + Sub<Self, Output = Self>
+{
     const MIN: Self;
+    const MAX: Self;
     const ZERO: Self;
 }
+
+struct EventInfo<Eval: Copy> {
+    lower_bound: Eval,
+    upper_bound: Eval,
+    chance: f32,
+}
+
+trait EventInfoVecExt<Eval> {
+    fn lower_bound(&self) -> Eval;
+    fn upper_bound(&self) -> Eval;
+    fn exact_value(&self) -> Eval;
+
+    fn compute_successor_min(&self, i: usize, alpha: Eval) -> Eval;
+    fn compute_successor_max(&self, i: usize, beta: Eval) -> Eval;
+}
+
+impl<Eval: Copy + EvalResult> EventInfoVecExt<Eval> for Vec<EventInfo<Eval>> {
+    fn lower_bound(&self) -> Eval {
+        self.iter()
+            .map(|entry| entry.lower_bound * entry.chance)
+            .sum()
+    }
+
+    fn upper_bound(&self) -> Eval {
+        self.iter()
+            .map(|entry| entry.upper_bound * entry.chance)
+            .sum()
+    }
+
+    fn exact_value(&self) -> Eval {
+        assert!(self.lower_bound() == self.upper_bound());
+        self.lower_bound()
+    }
+
+    fn compute_successor_min(&self, i: usize, alpha: Eval) -> Eval {
+        let mut cur_alpha = alpha - self.upper_bound();
+        cur_alpha = cur_alpha + self[i].upper_bound * self[i].chance;
+        cur_alpha = cur_alpha * (1.0 / self[i].chance);
+        cur_alpha
+    }
+
+    fn compute_successor_max(&self, i: usize, beta: Eval) -> Eval {
+        let mut cur_beta = beta - self.lower_bound();
+        cur_beta = cur_beta + self[i].lower_bound * self[i].chance;
+        cur_beta = cur_beta * (1.0 / self[i].chance);
+        cur_beta
+    }
+}
+
+const PROBING_FACTOR: usize = 1;
 
 impl<F: EvaluationFunction> MicroEngine<F> {
     pub fn new(fun: F) -> Self {
         Self {
             eval_function: fun,
-            transposition_table: RapidHashMap::new(),
+            chance_node_transposition_table: RapidHashMap::new(),
+            choice_node_transposition_table: RapidHashMap::new(),
             stop_signal: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    pub fn cull_table(&mut self, current_state: &CombatState) {
+        let current_turn = current_state.turn_counter;
+
+        self.chance_node_transposition_table
+            .retain(|(state, _), _| state.turn_counter >= current_turn);
+        self.choice_node_transposition_table
+            .retain(|state, _| state.turn_counter >= current_turn);
     }
 
     pub fn next_combat_action(
@@ -101,7 +167,13 @@ impl<F: EvaluationFunction> MicroEngine<F> {
         });
 
         for depth in 0..=max_depth {
-            match self.evaluate(state.clone(), F::EvalResult::MIN, depth) {
+            match self.get_max(
+                state,
+                F::EvalResult::MIN,
+                F::EvalResult::MAX,
+                // self.eval_function.best_possible_evaluation(state),
+                depth,
+            ) {
                 ControlFlow::Continue(eval) => {}
                 ControlFlow::Break(()) => {
                     dbg!(depth);
@@ -109,17 +181,20 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                 }
             }
 
-            let res = self
-                .transposition_table
-                .get(state)
-                .map_or((None, None), |entry| match entry.eval {
-                    EvalRunResult::Exact { eval, action } => (Some(action), Some(eval)),
-                    EvalRunResult::UpperBound(upper) => {
-                        unreachable!("Only found upper bound {upper:?}")
-                    }
-                });
+            // let res =
+            //     self.choice_node_transposition_table
+            //         .get(state)
+            //         .map_or((None, None), |entry| match entry.eval {
+            //             EvalRunResult::Exact { eval, action } => (Some(action), Some(eval)),
+            //             EvalRunResult::UpperBound(bound) => {
+            //                 unreachable!("Only found upper bound {bound:?}")
+            //             }
+            //             EvalRunResult::LowerBound(bound) => {
+            //                 unreachable!("Only found lower bound {bound:?}")
+            //             }
+            //         });
 
-            (logger)(format!("[Depth {depth}]: {res:?}",));
+            // (logger)(format!("[Depth {depth}]: {res:?}",));
 
             // TODO: Debug
             // if let Some(action) = res.0 {
@@ -131,15 +206,18 @@ impl<F: EvaluationFunction> MicroEngine<F> {
             // }
         }
 
-        let final_eval = self
-            .transposition_table
-            .get(state)
-            .map_or((None, None), |entry| match entry.eval {
+        let final_eval = self.choice_node_transposition_table.get(state).map_or(
+            (None, None),
+            |entry| match entry.eval {
                 EvalRunResult::Exact { eval, action } => (Some(action), Some(eval)),
-                EvalRunResult::UpperBound(upper) => {
-                    unreachable!("Only found upper bound {upper:?}")
+                EvalRunResult::UpperBound(bound) => {
+                    unreachable!("Only found upper bound {bound:?}")
                 }
-            });
+                EvalRunResult::LowerBound(bound) => {
+                    unreachable!("Only found lower bound {bound:?}")
+                }
+            },
+        );
 
         (logger)(format!("[Final Eval]: {final_eval:?}"));
 
@@ -158,169 +236,449 @@ impl<F: EvaluationFunction> MicroEngine<F> {
             .map(|action| {
                 (
                     action,
-                    state
-                        .apply(action)
-                        .map(|state| {
-                            self.evaluate(state, F::EvalResult::MIN, 20)
-                                .continue_value()
-                                .unwrap()
-                        })
-                        .expected_value(),
+                    self.get_expected(
+                        (state.clone(), action),
+                        F::EvalResult::MIN,
+                        self.eval_function.best_possible_evaluation(state),
+                        5,
+                    )
+                    .continue_value()
+                    .unwrap(),
                 )
             })
             .collect()
     }
 
-    pub(crate) fn evaluate(
+    fn get_max(
         &mut self,
-        state: CombatState,
-        guaranteed_reachable_expected: F::EvalResult,
-
-        max_depth: u8,
+        state: &CombatState,
+        mut alpha: F::EvalResult,
+        mut beta: F::EvalResult,
+        depth: u8,
     ) -> ControlFlow<(), F::EvalResult> {
         if self.stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
             return ControlFlow::Break(());
         }
 
-        if let Some(cached) = self.transposition_table.get(&state)
-            && cached.depth_searched >= max_depth
+        if let Some(combat_done) = state.get_post_game_state() {
+            return ControlFlow::Continue(self.eval_function.evaluate_postgame_state(combat_done));
+        }
+
+        if depth == 0 {
+            return ControlFlow::Continue(self.eval_function.expected_evaluation(&state));
+        }
+
+        if let Some(entry) = self
+            .choice_node_transposition_table
+            // FIXME: I hate this clone
+            .get(state)
+            && entry.depth_searched >= depth
         {
-            match cached.eval {
-                EvalRunResult::UpperBound(upper_bound) => {
-                    if upper_bound <= guaranteed_reachable_expected {
-                        #[cfg(test)]
-                        test::TIMES_CACHED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        return ControlFlow::Continue(upper_bound);
+            match entry.eval {
+                EvalRunResult::Exact { eval, action } => {
+                    return std::ops::ControlFlow::Continue(eval);
+                }
+                EvalRunResult::LowerBound(bound) => {
+                    if bound >= beta {
+                        return std::ops::ControlFlow::Continue(bound);
+                    }
+                    if bound > alpha {
+                        alpha = bound;
                     }
                 }
-                EvalRunResult::Exact { eval, .. } => {
-                    #[cfg(test)]
-                    test::TIMES_CACHED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    return ControlFlow::Continue(eval);
+                EvalRunResult::UpperBound(bound) => {
+                    if bound <= alpha {
+                        return std::ops::ControlFlow::Continue(bound);
+                    }
+                    if bound < beta {
+                        beta = bound;
+                    }
                 }
             }
-        }
-
-        #[cfg(test)]
-        test::STATES_EVALUATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        #[cfg(test)]
-        test::STATES_EVALUATED_AT_DEPTH[usize::from(max_depth)]
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-        if let Some(combat_done) = state.get_post_game_state() {
-            return ControlFlow::Continue(self.eval_function.expected_evaluation(&state));
-        }
-
-        if max_depth == 0 {
-            // dbg!(guaranteed_reachable_expected);
-            return ControlFlow::Continue(self.eval_function.expected_evaluation(&state));
         }
 
         let legal_actions = state.legal_actions();
+        // TODO: SORT ACTIONS
 
-        // TODO: Sort actions smartly, if we look at good actions first, we cull more
-        let legal_actions: Vec<_> = legal_actions
-            .sorted_by_key(|action| {
-                if let Some(entry) = self.transposition_table.get(&state)
-                    && let EvalRunResult::Exact { action: cached, .. } = entry.eval
-                    && cached == *action
-                {
-                    -1000
-                } else {
-                    match action {
-                        CombatAction::PlayCard { card, target } => {
-                            match card.prototype.get_kind() {
-                                crate::game_state::cards::CardKind::Attack => 0,
-                                crate::game_state::cards::CardKind::Skill => 2,
-                                crate::game_state::cards::CardKind::Power => 1,
-                                crate::game_state::cards::CardKind::Status => 3,
-                                crate::game_state::cards::CardKind::Curse => 4,
-                            }
-                        }
-                        CombatAction::UsePotion { index } => 10,
-                        CombatAction::EndTurn => 20,
+        let mut value = F::EvalResult::MIN;
+        let mut best = None;
+        for action in legal_actions {
+            let expected = self.get_expected((state.clone(), action), alpha, beta, depth)?;
+
+            if expected > value {
+                best = Some(action);
+                value = expected;
+            }
+
+            if value >= beta {
+                self.choice_node_transposition_table.insert(
+                    state.clone(),
+                    TranspositionTableEntry {
+                        eval: EvalRunResult::LowerBound(value),
+                        depth_searched: depth,
+                    },
+                );
+                return ControlFlow::Continue(value);
+            }
+            if value > alpha {
+                alpha = value;
+            }
+        }
+
+        self.choice_node_transposition_table.insert(
+            state.clone(),
+            TranspositionTableEntry {
+                eval: EvalRunResult::Exact {
+                    action: best.expect("Each state should have at least one action"),
+                    eval: value,
+                },
+                depth_searched: depth,
+            },
+        );
+        ControlFlow::Continue(value)
+    }
+
+    fn get_max_probe(
+        &mut self,
+        state: &CombatState,
+        mut alpha: F::EvalResult,
+        mut beta: F::EvalResult,
+        depth: u8,
+
+        probing_factor: usize,
+    ) -> ControlFlow<(), F::EvalResult> {
+        if self.stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+            return ControlFlow::Break(());
+        }
+
+        if let Some(combat_done) = state.get_post_game_state() {
+            return ControlFlow::Continue(self.eval_function.evaluate_postgame_state(combat_done));
+        }
+
+        if depth == 0 {
+            return ControlFlow::Continue(self.eval_function.expected_evaluation(state));
+        }
+
+        if let Some(entry) = self
+            .choice_node_transposition_table
+            // FIXME: I hate this clone
+            .get(state)
+            && entry.depth_searched >= depth
+        {
+            match entry.eval {
+                EvalRunResult::Exact { eval, action } => {
+                    return std::ops::ControlFlow::Continue(eval);
+                }
+                EvalRunResult::LowerBound(bound) => {
+                    if bound >= beta {
+                        return std::ops::ControlFlow::Continue(bound);
+                    }
+                    if bound > alpha {
+                        alpha = bound;
                     }
                 }
-            })
-            .collect();
-
-        let mut possible_here = guaranteed_reachable_expected;
-        let mut best_action_here = None;
-        'action: for action in legal_actions {
-            let result: Distribution<CombatState> = state.apply(action);
-
-            let mut eval: F::EvalResult = F::EvalResult::ZERO;
-
-            let Distribution { mut entries } = result;
-            entries.sort_by(|(_, a), (_, b)| b.total_cmp(a));
-
-            let debug = entries.clone();
-
-            while !entries.is_empty() {
-                let upper_bound = eval
-                    + entries[..entries.len()]
-                        .iter()
-                        .map(|(state, chance)| {
-                            if let Some(entry) = self.transposition_table.get(state) {
-                                match entry.eval {
-                                    EvalRunResult::UpperBound(bound) => bound,
-                                    EvalRunResult::Exact { eval, .. } => eval,
-                                }
-                            } else {
-                                self.eval_function.best_possible_evaluation(state) * *chance
-                            }
-                        })
-                        .sum();
-
-                let (state, chance) = entries.pop().expect("We checked for empty before");
-
-                if upper_bound <= possible_here {
-                    // This action cannot be good better than something we found anymore
-
-                    #[cfg(test)]
-                    test::TIMES_CULLED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-
-                    continue 'action;
+                EvalRunResult::UpperBound(bound) => {
+                    if bound <= alpha {
+                        return std::ops::ControlFlow::Continue(bound);
+                    }
+                    if bound < beta {
+                        beta = bound;
+                    }
                 }
-
-                let this_state_eval = self.evaluate(state, possible_here, max_depth - 1)?;
-                eval = eval + this_state_eval * chance;
-            }
-
-            if eval > possible_here {
-                possible_here = eval;
-                best_action_here = Some(action);
             }
         }
 
-        let new_entry = TranspositionTableEntry {
-            eval: match best_action_here {
-                Some(action) => EvalRunResult::Exact {
-                    eval: possible_here,
+        let mut legal_actions = state.legal_actions().collect_vec();
+
+        legal_actions.sort_by_key(|action| {
+            if let Some(entry) = self.choice_node_transposition_table.get(state)
+                && let EvalRunResult::Exact {
+                    action: prev_best, ..
+                } = entry.eval
+                && *action == prev_best
+            {
+                return -1000;
+            }
+
+            match action {
+                CombatAction::PlayCard { card, target } => {
+                    // Look at rarer cards first
+                    match card.get_rarity() {
+                        crate::game_state::cards::Rarity::Basic => 4,
+                        crate::game_state::cards::Rarity::Common => 3,
+                        crate::game_state::cards::Rarity::Uncommon => 2,
+                        crate::game_state::cards::Rarity::Rare => 1,
+                    }
+                }
+                CombatAction::UsePotion { index } => 50,
+                CombatAction::EndTurn => 100,
+            }
+        });
+
+        // TODO: SORT ACTIONS
+
+        let mut value = F::EvalResult::MIN;
+
+        // Only consider the best probing_factor actions
+        for action in legal_actions.into_iter().take(probing_factor) {
+            let expected = self.get_expected((state.clone(), action), alpha, beta, depth)?;
+
+            if expected > value {
+                value = expected;
+            }
+
+            if value >= beta {
+                self.choice_node_transposition_table.insert(
+                    state.clone(),
+                    TranspositionTableEntry {
+                        eval: EvalRunResult::LowerBound(value),
+                        depth_searched: depth,
+                    },
+                );
+                return ControlFlow::Continue(value);
+            }
+            if value > alpha {
+                alpha = value;
+            }
+        }
+
+        self.choice_node_transposition_table.insert(
+            state.clone(),
+            TranspositionTableEntry {
+                eval: EvalRunResult::LowerBound(value),
+                depth_searched: depth,
+            },
+        );
+        ControlFlow::Continue(value)
+    }
+
+    fn get_expected(
+        &mut self,
+        (state, action): (CombatState, CombatAction),
+        mut alpha: F::EvalResult,
+        mut beta: F::EvalResult,
+
+        depth: u8,
+    ) -> ControlFlow<(), F::EvalResult> {
+        if self.stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
+            return ControlFlow::Break(());
+        }
+
+        if let Some(combat_done) = state.get_post_game_state() {
+            return ControlFlow::Continue(self.eval_function.evaluate_postgame_state(combat_done));
+        }
+
+        if depth == 0 {
+            return ControlFlow::Continue(self.eval_function.expected_evaluation(&state));
+        }
+
+        // probe transposition table for node information
+        if let Some(entry) = self
+            .chance_node_transposition_table
+            // FIXME: I hate this clone
+            .get(&(state.clone(), action))
+            && entry.depth_searched >= depth
+        {
+            match entry.eval {
+                EvalRunResult::Exact { eval, action } => {
+                    return std::ops::ControlFlow::Continue(eval);
+                }
+                EvalRunResult::LowerBound(bound) => {
+                    if bound >= beta {
+                        return std::ops::ControlFlow::Continue(bound);
+                    }
+                    if bound > alpha {
+                        alpha = bound;
+                    }
+                }
+                EvalRunResult::UpperBound(bound) => {
+                    if bound <= alpha {
+                        return std::ops::ControlFlow::Continue(bound);
+                    }
+                    if bound < beta {
+                        beta = bound;
+                    }
+                }
+            }
+        }
+
+        let mut successors = state.apply(action);
+        // Sort successors by rising probability (and as such by rising influence on the expected value)
+        successors.entries.sort_by(|a, b| b.1.total_cmp(&a.1));
+        // TODO: Sort?
+
+        let mut event_info = successors
+            .entries
+            .iter()
+            .map(|(state, chance)| EventInfo {
+                lower_bound: F::EvalResult::MIN,
+                upper_bound: self.eval_function.best_possible_evaluation(state),
+                chance: *chance,
+            })
+            .collect_vec();
+
+        // probe transposition table for successor information
+        for (i, (post_action_state, chance)) in successors.entries.iter().enumerate() {
+            if let Some(entry) = self.choice_node_transposition_table.get(&post_action_state)
+                && entry.depth_searched >= depth - 1
+            {
+                match entry.eval {
+                    EvalRunResult::Exact { eval, .. } => {
+                        event_info[i].lower_bound = eval;
+                        if event_info.lower_bound() >= beta {
+                            // TODO: Replacement rules
+                            self.chance_node_transposition_table.insert(
+                                (state, action),
+                                TranspositionTableEntry {
+                                    eval: EvalRunResult::LowerBound(event_info.lower_bound()),
+                                    depth_searched: depth,
+                                },
+                            );
+                            return std::ops::ControlFlow::Continue(event_info.lower_bound());
+                        }
+
+                        event_info[i].upper_bound = eval;
+                        if event_info.upper_bound() <= alpha {
+                            // TODO: Replacement rules
+                            self.chance_node_transposition_table.insert(
+                                (state, action),
+                                TranspositionTableEntry {
+                                    eval: EvalRunResult::UpperBound(event_info.upper_bound()),
+                                    depth_searched: depth,
+                                },
+                            );
+                            return std::ops::ControlFlow::Continue(event_info.upper_bound());
+                        }
+                    }
+                    EvalRunResult::LowerBound(eval) => {
+                        event_info[i].lower_bound = eval;
+                        if event_info.lower_bound() >= beta {
+                            // TODO: Replacement rules
+                            self.chance_node_transposition_table.insert(
+                                (state, action),
+                                TranspositionTableEntry {
+                                    eval: EvalRunResult::LowerBound(event_info.lower_bound()),
+                                    depth_searched: depth,
+                                },
+                            );
+                            return std::ops::ControlFlow::Continue(event_info.lower_bound());
+                        }
+                    }
+                    EvalRunResult::UpperBound(eval) => {
+                        event_info[i].upper_bound = eval;
+                        if event_info.upper_bound() <= alpha {
+                            // TODO: Replacement rules
+                            self.chance_node_transposition_table.insert(
+                                (state, action),
+                                TranspositionTableEntry {
+                                    eval: EvalRunResult::UpperBound(event_info.upper_bound()),
+                                    depth_searched: depth,
+                                },
+                            );
+                            return std::ops::ControlFlow::Continue(event_info.upper_bound());
+                        }
+                    }
+                }
+            }
+        }
+
+        // modified Star2-like probing phase
+        // for (i, (post_action_state, chance)) in successors.entries.iter().enumerate() {
+        //     // Exact eq like this is bad for floats
+        //     // TODO: The source paper had `node_info[i].UpperBound`, but I assume that is a typo
+        //     if event_info.lower_bound() != event_info[i].upper_bound {
+        //         let cur_beta = event_info.compute_successor_max(i, beta);
+        //         let max_possible = self
+        //             .eval_function
+        //             .best_possible_evaluation(post_action_state);
+
+        //         let bx = if max_possible < cur_beta {
+        //             max_possible
+        //         } else {
+        //             cur_beta
+        //         };
+
+        //         let search_val = self.get_max_probe(
+        //             post_action_state,
+        //             event_info[i].lower_bound,
+        //             bx,
+        //             depth - 1,
+        //             PROBING_FACTOR,
+        //         )?;
+
+        //         event_info[i].lower_bound = search_val;
+
+        //         if search_val >= cur_beta {
+        //             self.chance_node_transposition_table.insert(
+        //                 (state, action),
+        //                 TranspositionTableEntry {
+        //                     eval: EvalRunResult::LowerBound(event_info.lower_bound()),
+        //                     depth_searched: depth,
+        //                 },
+        //             );
+        //             return std::ops::ControlFlow::Continue(event_info.lower_bound());
+        //         }
+        //     }
+        // }
+
+        // Star1 search phase
+        for (i, (post_action_state, chance)) in successors.entries.iter().enumerate() {
+            let cur_alpha = event_info.compute_successor_min(i, alpha);
+            let cur_beta = event_info.compute_successor_max(i, beta);
+
+            let ax = if cur_alpha > F::EvalResult::MIN {
+                cur_alpha
+            } else {
+                F::EvalResult::MIN
+            };
+            let max_possible = self
+                .eval_function
+                .best_possible_evaluation(post_action_state);
+            let bx = if max_possible < cur_beta {
+                max_possible
+            } else {
+                cur_beta
+            };
+
+            let search_val = self.get_max(post_action_state, ax, bx, depth - 1)?;
+
+            event_info[i].lower_bound = search_val;
+            event_info[i].upper_bound = search_val;
+
+            if search_val >= cur_beta {
+                self.chance_node_transposition_table.insert(
+                    (state, action),
+                    TranspositionTableEntry {
+                        eval: EvalRunResult::LowerBound(event_info.lower_bound()),
+                        depth_searched: depth,
+                    },
+                );
+                return std::ops::ControlFlow::Continue(event_info.lower_bound());
+            }
+
+            if search_val <= cur_alpha {
+                self.chance_node_transposition_table.insert(
+                    (state, action),
+                    TranspositionTableEntry {
+                        eval: EvalRunResult::UpperBound(event_info.upper_bound()),
+                        depth_searched: depth,
+                    },
+                );
+                return std::ops::ControlFlow::Continue(event_info.upper_bound());
+            }
+        }
+
+        self.chance_node_transposition_table.insert(
+            (state, action),
+            TranspositionTableEntry {
+                eval: EvalRunResult::Exact {
+                    eval: event_info.exact_value(),
                     action,
                 },
-                None => EvalRunResult::UpperBound(possible_here),
+                depth_searched: depth,
             },
-
-            depth_searched: max_depth,
-        };
-
-        match self.transposition_table.entry(state) {
-            std::collections::hash_map::Entry::Occupied(mut occupied_entry) => {
-                if max_depth >= occupied_entry.get().depth_searched
-                    && (best_action_here.is_some()
-                        || matches!(occupied_entry.get().eval, EvalRunResult::UpperBound(_)))
-                {
-                    occupied_entry.insert(new_entry);
-                }
-            }
-            std::collections::hash_map::Entry::Vacant(vacant_entry) => {
-                vacant_entry.insert(new_entry);
-            }
-        }
-
-        ControlFlow::Continue(possible_here)
+        );
+        std::ops::ControlFlow::Continue(event_info.exact_value())
     }
 }
 
@@ -347,11 +705,10 @@ mod test {
     use std::{f32, sync::atomic::AtomicUsize};
 
     use enum_map::EnumMap;
-    use rapidhash::HashMapExt;
 
     use crate::{
         TestEngineCurrentHp,
-        game_state::{self, Creature, Enemy, EnemyStateMachine, Player, Status},
+        game_state::{self, Creature, Enemy, EnemyStateMachine, Player},
     };
 
     use super::*;
@@ -480,13 +837,7 @@ mod test {
 
     #[test]
     fn test_action_map() {
-        let mut engine = MicroEngine {
-            eval_function: TestEngineCurrentHp {},
-
-            transposition_table: rapidhash::RapidHashMap::new(),
-
-            stop_signal: Arc::new(AtomicBool::new(false)),
-        };
+        let mut engine = MicroEngine::new(TestEngineCurrentHp {});
 
         let state = CombatState {
             turn_counter: 0,
@@ -528,13 +879,7 @@ mod test {
 
     #[test]
     fn test_action_map_different_values() {
-        let mut engine = MicroEngine {
-            eval_function: TestEngineCurrentHp {},
-
-            transposition_table: rapidhash::RapidHashMap::new(),
-
-            stop_signal: Arc::new(AtomicBool::new(false)),
-        };
+        let mut engine = MicroEngine::new(TestEngineCurrentHp {});
 
         let state = game_state::test::unneeded_blocking();
 
@@ -543,8 +888,13 @@ mod test {
             .into_iter()
             .sorted_by(|(_, a), (_, b)| b.total_cmp(a))
             .collect_vec();
-        dbg!(engine.evaluate(state.clone(), f32::MIN, 20));
-        dbg!(engine.transposition_table.get(&state));
+        dbg!(engine.get_max(
+            &state,
+            f32::MIN,
+            engine.eval_function.best_possible_evaluation(&state),
+            20
+        ));
+        dbg!(engine.choice_node_transposition_table.get(&state));
 
         print_action_map(&map, &state);
     }
@@ -553,16 +903,10 @@ mod test {
     fn test_eval() {
         let mut state = game_state::test::simple_test_combat_state();
 
-        let mut engine = MicroEngine {
-            eval_function: TestEngineCurrentHp {},
-
-            transposition_table: rapidhash::RapidHashMap::new(),
-
-            stop_signal: Arc::new(AtomicBool::new(false)),
-        };
+        let mut engine = MicroEngine::new(TestEngineCurrentHp {});
 
         loop {
-            dbg!(&state.enemies);
+            // dbg!(&state.enemies);
             // let map = engine
             //     .get_action_map(&state)
             //     .into_iter()

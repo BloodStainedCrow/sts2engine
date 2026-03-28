@@ -1,9 +1,10 @@
 use std::{
-    collections::HashMap,
     hash::Hash,
     iter::Sum,
     ops::{ControlFlow, Mul, MulAssign},
 };
+
+use rapidhash::{HashMapExt, RapidHashMap};
 
 #[derive(Debug)]
 pub struct Distribution<Value> {
@@ -45,7 +46,7 @@ impl<Value> Distribution<Distribution<Value>> {
 
 impl<Value: PartialEq + Eq + Hash> Distribution<Value> {
     pub(crate) fn dedup(&mut self) {
-        let mut new_entries = HashMap::new();
+        let mut new_entries = RapidHashMap::new();
 
         for (val, chance) in self.entries.drain(..) {
             match new_entries.entry(val) {
