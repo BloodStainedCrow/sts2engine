@@ -46,6 +46,10 @@ impl EvaluationFunction for TestEngineCurrentHp {
     }
 
     fn expected_evaluation(&self, combat_state: &CombatState) -> Self::EvalResult {
+        // if combat_state.get_post_game_state().is_some() {
+        //     dbg!(combat_state);
+        // }
+
         let damage_done_per_turn = 10.0;
         let damage_taken_per_turn_base = 5.0;
 
@@ -92,7 +96,9 @@ impl EvaluationFunction for TestEngineCurrentHp {
             - damage
             - f32::from(incoming_damage.saturating_sub(combat_state.player.creature.block));
 
-        eval
+        // dbg!(eval);
+
+        eval - f32::from(combat_state.turn_counter)
     }
 }
 

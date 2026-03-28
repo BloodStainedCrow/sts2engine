@@ -15,7 +15,7 @@ use rapidhash::{HashMapExt, RapidHashMap};
 use crate::{
     combat_action::CombatAction,
     distribution::Distribution,
-    game_state::{CombatState, PostCombatState},
+    game_state::{CombatState, PostCombatState, cards::CardKind},
 };
 
 #[derive(Debug)]
@@ -161,7 +161,7 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                     state
                         .apply(action)
                         .map(|state| {
-                            self.evaluate(state, F::EvalResult::MIN, 3)
+                            self.evaluate(state, F::EvalResult::MIN, 20)
                                 .continue_value()
                                 .unwrap()
                         })
@@ -262,7 +262,14 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                     + entries[..entries.len()]
                         .iter()
                         .map(|(state, chance)| {
-                            self.eval_function.best_possible_evaluation(state) * *chance
+                            if let Some(entry) = self.transposition_table.get(state) {
+                                match entry.eval {
+                                    EvalRunResult::UpperBound(bound) => bound,
+                                    EvalRunResult::Exact { eval, .. } => eval,
+                                }
+                            } else {
+                                self.eval_function.best_possible_evaluation(state) * *chance
+                            }
                         })
                         .sum();
 
@@ -531,19 +538,20 @@ mod test {
 
         let state = game_state::test::unneeded_blocking();
 
-        dbg!(engine.evaluate(state.clone(), f32::MIN, 4));
         let map = engine
             .get_action_map(&state)
             .into_iter()
             .sorted_by(|(_, a), (_, b)| b.total_cmp(a))
             .collect_vec();
+        dbg!(engine.evaluate(state.clone(), f32::MIN, 20));
+        dbg!(engine.transposition_table.get(&state));
 
         print_action_map(&map, &state);
     }
 
     #[test]
     fn test_eval() {
-        let mut state = game_state::test::unneeded_blocking();
+        let mut state = game_state::test::simple_test_combat_state();
 
         let mut engine = MicroEngine {
             eval_function: TestEngineCurrentHp {},

@@ -1296,34 +1296,6 @@ pub(crate) mod test {
                         upgraded: false,
                     },
                     Card {
-                        prototype: Defend,
-                        upgraded: false,
-                    },
-                    Card {
-                        prototype: Defend,
-                        upgraded: false,
-                    },
-                    Card {
-                        prototype: Defend,
-                        upgraded: false,
-                    },
-                    Card {
-                        prototype: Defend,
-                        upgraded: false,
-                    },
-                    Card {
-                        prototype: Strike,
-                        upgraded: false,
-                    },
-                    Card {
-                        prototype: Strike,
-                        upgraded: false,
-                    },
-                    Card {
-                        prototype: Strike,
-                        upgraded: false,
-                    },
-                    Card {
                         prototype: Strike,
                         upgraded: false,
                     },
@@ -1344,7 +1316,7 @@ pub(crate) mod test {
             enemies: vec![Enemy {
                 prototype: FuzzyWurmCrawler,
                 creature: Creature {
-                    hp: 42,
+                    hp: 47,
                     max_hp: 57,
                     block: 0,
                     statuses: EnumMap::from_array([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
