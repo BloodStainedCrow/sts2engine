@@ -61,7 +61,7 @@ impl EvaluationFunction for TestEngineCurrentHp {
         let damage_done_per_turn = 10.0
             + 1.5 * f32::from(combat_state.player.creature.statuses[Status::Tracking])
             + 0.5 * f32::from(combat_state.player.creature.statuses[Status::Accuracy]);
-        let mut damage_taken_per_turn_base = (5.0 + (f32::from(combat_state.turn_counter)))
+        let mut damage_taken_per_turn_base = (1.0 + (f32::from(combat_state.turn_counter)))
             - f32::from(combat_state.player.creature.statuses[Status::Dexterity])
             - f32::from(combat_state.player.creature.statuses[Status::Fasten]) / 2.0;
 
@@ -126,9 +126,9 @@ fn main() {
 
     // TODO: Assume specific fight
     let pre_first_turn_state = game_state::CombatState::get_starting_states(
-        game_state::EncounterPrototype::Entomancer,
+        game_state::EncounterPrototype::SlumberParty,
         &RunInfo {
-            hp: 55,
+            hp: 30,
             deck: vec![in &bump;
                 Card { prototype: CardPrototype::Strike, upgraded: false, enchantment: Some(CardEnchantment::TezcatarasEmber)},
                 Card { prototype: CardPrototype::Strike, upgraded: false, enchantment: Some(CardEnchantment::TezcatarasEmber)},
@@ -156,6 +156,8 @@ fn main() {
                 CardPrototype::Squash.get_normal_card(),
                 CardPrototype::Accuracy.get_normal_card(),
                 Card { prototype: CardPrototype::Dash, upgraded: true, enchantment: None },
+                Card { prototype: CardPrototype::Burst, upgraded: true, enchantment: None },
+                Card { prototype: CardPrototype::BladeDance, upgraded: true, enchantment: None },
             ],
             relic_state: [
                 RingOfTheSnake,
@@ -165,11 +167,13 @@ fn main() {
                 NutritiousSoup,
                 Gorget,
                 MealTicket,
+                Vajra,
             ]
             .into_iter()
             .collect(),
         },
-        |hp| true,
+        |hp| hp == [48, 42, 86],
+        // |_| true,
         &bump,
     );
 

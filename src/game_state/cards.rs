@@ -216,6 +216,8 @@ impl Card {
             (CardPrototype::Accuracy, _) => ENERGY[1],
             (CardPrototype::Squash, _) => ENERGY[1],
             (CardPrototype::Dash, _) => ENERGY[2],
+            (CardPrototype::Burst, _) => ENERGY[1],
+            (CardPrototype::BladeDance, _) => ENERGY[1],
         };
 
         if self.enchantment == Some(CardEnchantment::TezcatarasEmber) {
@@ -260,6 +262,8 @@ impl Card {
             CardPrototype::Accuracy => [LegalTarget::OwnPlayer],
             CardPrototype::Squash => [LegalTarget::Enemy],
             CardPrototype::Dash => [LegalTarget::Enemy],
+            CardPrototype::Burst => [LegalTarget::OwnPlayer],
+            CardPrototype::BladeDance => [LegalTarget::OwnPlayer],
         }
         .into_iter()
     }
@@ -298,6 +302,8 @@ impl Card {
             CardPrototype::Accuracy => Uncommon,
             CardPrototype::Squash => Special,
             CardPrototype::Dash => Uncommon,
+            CardPrototype::Burst => Rare,
+            CardPrototype::BladeDance => Common,
         }
     }
 
@@ -315,6 +321,7 @@ impl Card {
     pub fn has_exhaust(self) -> bool {
         match self.prototype {
             CardPrototype::Shiv => true,
+            CardPrototype::BladeDance => true,
             _ => false,
         }
     }
@@ -384,6 +391,8 @@ pub enum CardPrototype {
     Accuracy,
     Squash,
     Dash,
+    Burst,
+    BladeDance,
 }
 
 impl CardPrototype {
@@ -429,6 +438,8 @@ impl CardPrototype {
             Self::Accuracy => Power,
             Self::Squash => Attack,
             Self::Dash => Attack,
+            Self::Burst => Skill,
+            Self::BladeDance => Skill,
         }
     }
 }

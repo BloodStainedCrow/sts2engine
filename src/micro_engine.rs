@@ -217,8 +217,8 @@ impl<F: EvaluationFunction> MicroEngine<F> {
     pub fn new(fun: F) -> Self {
         Self {
             eval_function: fun,
-            chance_node_transposition_table: BraveHashTable::new(1_000_000_000),
-            choice_node_transposition_table: BraveHashTable::new(1_000_000_000),
+            chance_node_transposition_table: BraveHashTable::new(2_000_000_000),
+            choice_node_transposition_table: BraveHashTable::new(2_000_000_000),
             had_to_estimate: false,
             stop_signal: Arc::new(AtomicBool::new(false)),
         }
@@ -831,7 +831,7 @@ mod test {
     pub static TRANSPOSITION_TABLE_READS: AtomicUsize = AtomicUsize::new(0);
     pub static TRANSPOSITION_TABLE_HITS: AtomicUsize = AtomicUsize::new(0);
 
-    use std::{f32, sync::atomic::AtomicUsize};
+    use std::{f32, iter, sync::atomic::AtomicUsize};
 
     use bumpalo::vec;
     use enum_map::EnumMap;
@@ -875,6 +875,7 @@ mod test {
                     has_taken_unblocked_damage_this_turn: false,
                 },
             ],
+            relic_state: iter::empty().collect(),
         });
         let focus = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
@@ -905,6 +906,7 @@ mod test {
                     has_taken_unblocked_damage_this_turn: false,
                 },
             ],
+            relic_state: iter::empty().collect(),
         });
 
         dbg!(spread, focus);
@@ -939,6 +941,7 @@ mod test {
                     has_taken_unblocked_damage_this_turn: false,
                 },
             ],
+            relic_state: iter::empty().collect(),
         });
         let focus = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
@@ -969,6 +972,7 @@ mod test {
                     has_taken_unblocked_damage_this_turn: false,
                 },
             ],
+            relic_state: iter::empty().collect(),
         });
 
         assert!(spread < focus, "{spread} < {focus}");
@@ -1008,6 +1012,7 @@ mod test {
                     has_taken_unblocked_damage_this_turn: false,
                 },
             ],
+            relic_state: iter::empty().collect(),
         };
 
         let map = engine

@@ -134,6 +134,8 @@ enum IntentInfo {
     DebuffStrong {},
     Defend {},
     StatusCard { count: u8 },
+    Stun {},
+    Sleep {},
 }
 
 impl EnemyInfo {
