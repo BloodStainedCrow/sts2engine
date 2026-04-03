@@ -1,24 +1,29 @@
 use std::{
     hash::Hash,
     iter::Sum,
-    ops::{ControlFlow, Mul, MulAssign},
+    ops::{Mul, MulAssign},
 };
 
+use bumpalo::{
+    Bump,
+    collections::{CollectIn, Vec},
+};
+use itertools::Itertools;
 use rapidhash::{HashMapExt, RapidHashMap};
 
 #[derive(Debug)]
-pub struct Distribution<Value> {
-    pub entries: Vec<(Value, f32)>,
+pub struct Distribution<'bump, Value> {
+    pub entries: bumpalo::collections::Vec<'bump, (Value, f32)>,
 }
 
-impl<Value: Copy + Sum<Value> + Mul<f32, Output = Value>> Distribution<Value> {
+impl<Value: Copy + Sum<Value> + Mul<f32, Output = Value>> Distribution<'_, Value> {
     #[must_use]
     pub(crate) fn expected_value(&self) -> Value {
         self.entries.iter().map(|(v, chance)| *v * *chance).sum()
     }
 }
 
-impl<Value> MulAssign<f32> for Distribution<Value> {
+impl<Value> MulAssign<f32> for Distribution<'_, Value> {
     fn mul_assign(&mut self, rhs: f32) {
         for (_val, chance) in &mut self.entries {
             *chance *= rhs;
@@ -26,9 +31,9 @@ impl<Value> MulAssign<f32> for Distribution<Value> {
     }
 }
 
-impl<Value> Distribution<Distribution<Value>> {
+impl<'bump, Value> Distribution<'bump, Distribution<'bump, Value>> {
     #[must_use]
-    pub(crate) fn flatten(self) -> Distribution<Value> {
+    pub(crate) fn flatten(self, arena: &'bump bumpalo::Bump) -> Distribution<'bump, Value> {
         let Self { entries } = self;
 
         // Note: This does not deduplicate
@@ -38,13 +43,13 @@ impl<Value> Distribution<Distribution<Value>> {
                 entry *= chance;
                 entry.entries
             })
-            .collect();
+            .collect_in(arena);
 
         Distribution { entries: reduced }
     }
 }
 
-impl<Value: PartialEq + Eq + Hash> Distribution<Value> {
+impl<Value: PartialEq + Eq + Hash> Distribution<'_, Value> {
     pub(crate) fn dedup(&mut self) {
         let mut new_entries = RapidHashMap::new();
 
@@ -63,17 +68,17 @@ impl<Value: PartialEq + Eq + Hash> Distribution<Value> {
     }
 }
 
-impl<Value> Distribution<Value> {
+impl<'bump, Value> Distribution<'bump, Value> {
     #[must_use]
-    pub(crate) fn single_value(value: Value) -> Self {
+    pub(crate) fn single_value(value: Value, bump: &'bump Bump) -> Self {
         Self {
-            entries: vec![(value, 1.0)],
+            entries: bumpalo::vec![in bump; (value, 1.0)],
         }
     }
 
     #[must_use]
-    pub(crate) fn equal_chance(values: impl IntoIterator<Item = Value>) -> Self {
-        let mut entries: Vec<(Value, f32)> = values.into_iter().map(|v| (v, 0.0)).collect();
+    pub(crate) fn equal_chance(values: impl IntoIterator<Item = Value>, bump: &'bump Bump) -> Self {
+        let mut entries: Vec<(Value, f32)> = values.into_iter().map(|v| (v, 0.0)).collect_in(bump);
 
         let count = entries.len() as f32;
 
@@ -85,11 +90,14 @@ impl<Value> Distribution<Value> {
     }
 
     #[must_use]
-    pub(crate) fn from_duplicates(values: impl IntoIterator<Item = (Value, usize)>) -> Self {
+    pub(crate) fn from_duplicates(
+        values: impl IntoIterator<Item = (Value, usize)>,
+        bump: &'bump Bump,
+    ) -> Self {
         let mut entries: Vec<(Value, f32)> = values
             .into_iter()
             .map(|(v, count)| (v, count as f32))
-            .collect();
+            .collect_in(bump);
 
         let count: f32 = entries.iter().map(|(_, count)| count).sum();
 
@@ -101,7 +109,7 @@ impl<Value> Distribution<Value> {
     }
 
     #[must_use]
-    pub(crate) const fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }
 
@@ -134,61 +142,51 @@ impl<Value> Distribution<Value> {
         self
     }
 
-    #[must_use]
     pub(crate) fn retain_no_chance_fix(&mut self, filter: impl Fn(&Value) -> bool) {
         self.entries.retain(|(v, _)| (filter)(v));
     }
 
     #[must_use]
-    pub(crate) fn map<T>(self, mut fun: impl FnMut(Value) -> T) -> Distribution<T> {
+    pub(crate) fn map<T>(
+        self,
+        mut fun: impl FnMut(Value) -> T,
+        bump: &'bump Bump,
+    ) -> Distribution<'bump, T> {
         let Self { entries } = self;
 
         Distribution {
             entries: entries
                 .into_iter()
                 .map(|(val, chance)| ((fun)(val), chance))
-                .collect(),
+                .collect_in(bump),
         }
-    }
-
-    pub(crate) fn try_map<B, T>(
-        self,
-        mut fun: impl FnMut(Value) -> ControlFlow<B, T>,
-    ) -> ControlFlow<B, Distribution<T>> {
-        let Self { entries } = self;
-
-        let entries: Vec<_> = entries
-            .into_iter()
-            .map(|(val, chance)| (fun)(val).map_continue(|v| (v, chance)))
-            .try_collect::<Vec<_>>()?;
-
-        ControlFlow::Continue(Distribution { entries })
     }
 
     #[must_use]
     pub(crate) fn flat_map<T>(
         self,
-        mut fun: impl FnMut(Value) -> Distribution<T>,
-    ) -> Distribution<T> {
+        mut fun: impl FnMut(Value, &'bump Bump) -> Distribution<'bump, T>,
+        bump: &'bump Bump,
+    ) -> Distribution<'bump, T> {
         let Self { mut entries } = self;
 
         if entries.len() == 1 {
             let Some((value, _chance)) = entries.pop() else {
                 unreachable!()
             };
-            (fun)(value)
+            (fun)(value, bump)
         } else {
             // Note: This does not deduplicate
             let reduced = entries
                 .into_iter()
                 .flat_map(|(entry, chance)| {
-                    let mapped = (fun)(entry);
+                    let mapped = (fun)(entry, bump);
                     mapped
                         .entries
                         .into_iter()
                         .map(move |(v, inner)| (v, inner * chance))
                 })
-                .collect();
+                .collect_in(bump);
 
             Distribution { entries: reduced }
         }

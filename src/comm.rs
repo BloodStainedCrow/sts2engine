@@ -1,4 +1,4 @@
-use std::ops::ControlFlow;
+use std::{ops::ControlFlow, vec};
 
 use itertools::Itertools;
 use rcon_client::{AuthRequest, RCONClient, RCONConfig, RCONRequest};
@@ -12,10 +12,13 @@ use crate::{
     },
 };
 
+use bumpalo::collections::Vec;
+
 pub struct Comm {
     rcon: RCONComm,
 }
 
+#[derive(Debug)]
 pub struct NoValidOptionError;
 
 impl Comm {
@@ -29,15 +32,15 @@ impl Comm {
         todo!()
     }
 
-    pub fn find_valid_combat_states(
+    pub fn find_valid_combat_states<'bump>(
         &mut self,
-        options: Vec<CombatState>,
-    ) -> Result<CombatState, NoValidOptionError> {
-        fn inner(
+        options: Vec<'bump, CombatState<'bump>>,
+    ) -> Result<CombatState<'bump>, NoValidOptionError> {
+        fn inner<'bump>(
             comm: &mut RCONComm,
-            mut options: Vec<CombatState>,
-        ) -> ControlFlow<Result<CombatState, NoValidOptionError>> {
-            // dbg!(options.first());
+            mut options: Vec<'bump, CombatState>,
+        ) -> ControlFlow<Result<CombatState<'bump>, NoValidOptionError>> {
+            dbg!(options.first());
             // let mut options = is_single_choice(options)?;
 
             println!("Pre player hp: {}", options.len());
@@ -63,6 +66,7 @@ impl Comm {
             // let mut options = is_single_choice(options)?;
 
             let hand = comm.hand();
+            dbg!(&hand);
             options.retain(|state| state.player.hand.satisfies(&hand));
             println!("Post hand: {}", options.len());
 
@@ -106,9 +110,9 @@ struct EnemyInfo {
     max_hp: u16,
     block: u16,
 
-    powers: Vec<(Status, i16)>,
+    powers: vec::Vec<(Status, i16)>,
 
-    intent: Vec<IntentInfo>,
+    intent: vec::Vec<IntentInfo>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -118,7 +122,7 @@ struct PlayerCreatureInfo {
     max_hp: u16,
     block: u16,
 
-    powers: Vec<(Status, i16)>,
+    powers: vec::Vec<(Status, i16)>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -126,8 +130,10 @@ struct PlayerCreatureInfo {
 enum IntentInfo {
     Attack { damage: u16, repeat: u16 },
     Buff {},
+    Debuff {},
     DebuffStrong {},
     Defend {},
+    StatusCard { count: u8 },
 }
 
 impl EnemyInfo {
@@ -165,17 +171,16 @@ struct CardInfo {
 #[derive(Debug, serde::Deserialize)]
 #[serde(rename_all = "PascalCase")]
 struct CardState {
-    draw: Vec<CardInfo>,
-    hand: Vec<CardInfo>,
-    discard: Vec<CardInfo>,
-    exhaust: Vec<CardInfo>,
-    play: Vec<CardInfo>,
-    deck: Vec<CardInfo>,
+    draw: vec::Vec<CardInfo>,
+    hand: vec::Vec<CardInfo>,
+    discard: vec::Vec<CardInfo>,
+    exhaust: vec::Vec<CardInfo>,
+    play: vec::Vec<CardInfo>,
+    deck: vec::Vec<CardInfo>,
 }
 
-impl UnorderedCardSet {
+impl UnorderedCardSet<'_> {
     fn satisfies(&self, cards: &[CardInfo]) -> bool {
-        dbg!(self);
         let counts: std::collections::HashMap<CardPrototype, usize> =
             cards.iter().map(|card| card.kind).counts();
         let state_counts: std::collections::HashMap<CardPrototype, usize> = self
@@ -183,6 +188,8 @@ impl UnorderedCardSet {
             .iter()
             .filter_map(|(card, count)| (*count > 0).then_some((card.prototype, *count as usize)))
             .collect();
+
+        dbg!(&state_counts);
 
         counts == state_counts
     }
@@ -233,7 +240,7 @@ impl RCONComm {
         creature.block
     }
 
-    fn enemies(&mut self) -> Vec<EnemyInfo> {
+    fn enemies(&mut self) -> vec::Vec<EnemyInfo> {
         let res = self
             .client
             .execute(RCONRequest::new("get_enemies".to_owned()))
@@ -251,7 +258,7 @@ impl RCONComm {
         }
     }
 
-    fn hand(&mut self) -> Vec<CardInfo> {
+    fn hand(&mut self) -> vec::Vec<CardInfo> {
         let res = self
             .client
             .execute(RCONRequest::new("get_combat_card_state".to_owned()))
@@ -287,6 +294,16 @@ impl RCONComm {
                 }
             }
             CombatAction::UsePotion { index } => todo!(),
+            CombatAction::Choice { card } => {
+                let hand = self.hand();
+
+                let card_index = hand
+                    .iter()
+                    .position(|info| info.kind == card.prototype)
+                    .unwrap_or_else(|| panic!("Could not find card {card:?} in game hand"));
+
+                format!("choose_card_from_hand {card_index}")
+            }
             CombatAction::EndTurn => "end_turn".to_string(),
         };
 
