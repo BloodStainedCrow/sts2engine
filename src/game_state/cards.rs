@@ -211,6 +211,11 @@ impl Card {
             (CardPrototype::LeadingStrike, _) => ENERGY[1],
             (CardPrototype::Tracking, false) => ENERGY[2],
             (CardPrototype::Tracking, true) => ENERGY[1],
+            (CardPrototype::SuckerPunch, _) => ENERGY[1],
+            (CardPrototype::Haze, _) => ENERGY[3],
+            (CardPrototype::Accuracy, _) => ENERGY[1],
+            (CardPrototype::Squash, _) => ENERGY[1],
+            (CardPrototype::Dash, _) => ENERGY[2],
         };
 
         if self.enchantment == Some(CardEnchantment::TezcatarasEmber) {
@@ -250,6 +255,11 @@ impl Card {
             CardPrototype::CloakAndDagger => [LegalTarget::OwnPlayer],
             CardPrototype::LeadingStrike => [LegalTarget::Enemy],
             CardPrototype::Tracking => [LegalTarget::OwnPlayer],
+            CardPrototype::SuckerPunch => [LegalTarget::Enemy],
+            CardPrototype::Haze => [LegalTarget::OwnPlayer],
+            CardPrototype::Accuracy => [LegalTarget::OwnPlayer],
+            CardPrototype::Squash => [LegalTarget::Enemy],
+            CardPrototype::Dash => [LegalTarget::Enemy],
         }
         .into_iter()
     }
@@ -283,6 +293,11 @@ impl Card {
             CardPrototype::CloakAndDagger => Common,
             CardPrototype::LeadingStrike => Common,
             CardPrototype::Tracking => Rare,
+            CardPrototype::SuckerPunch => Common,
+            CardPrototype::Haze => Uncommon,
+            CardPrototype::Accuracy => Uncommon,
+            CardPrototype::Squash => Special,
+            CardPrototype::Dash => Uncommon,
         }
     }
 
@@ -300,6 +315,13 @@ impl Card {
     pub fn has_exhaust(self) -> bool {
         match self.prototype {
             CardPrototype::Shiv => true,
+            _ => false,
+        }
+    }
+
+    pub fn has_sly(self) -> bool {
+        match self.prototype {
+            CardPrototype::Haze => true,
             _ => false,
         }
     }
@@ -357,6 +379,11 @@ pub enum CardPrototype {
     CloakAndDagger,
     LeadingStrike,
     Tracking,
+    SuckerPunch,
+    Haze,
+    Accuracy,
+    Squash,
+    Dash,
 }
 
 impl CardPrototype {
@@ -397,6 +424,11 @@ impl CardPrototype {
             Self::CloakAndDagger => Skill,
             Self::LeadingStrike => Attack,
             Self::Tracking => Power,
+            Self::SuckerPunch => Attack,
+            Self::Haze => Skill,
+            Self::Accuracy => Power,
+            Self::Squash => Attack,
+            Self::Dash => Attack,
         }
     }
 }

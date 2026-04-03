@@ -421,7 +421,13 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                     }
                 }
                 CombatAction::UsePotion { index } => 50,
-                CombatAction::Choice { .. } => 0,
+                CombatAction::Choice { card, .. } => {
+                    if card.has_sly() {
+                        -100
+                    } else {
+                        0
+                    }
+                }
                 CombatAction::EndTurn => 100,
             }
         });
@@ -832,10 +838,7 @@ mod test {
 
     use crate::{
         TestEngineCurrentHp,
-        game_state::{
-            self, Creature, Enemy, EnemyStateMachine, Player,
-            cards::{Card, CardPrototype},
-        },
+        game_state::{self, Creature, Enemy, EnemyStateMachine, Player},
     };
 
     use super::*;
@@ -856,7 +859,8 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 0 },
+                    state_machine: EnemyStateMachine { current_state: 0, ..Default::default() },
+                    has_taken_unblocked_damage_this_turn: false,
                 },
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
@@ -867,7 +871,8 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 2 },
+                    state_machine: EnemyStateMachine { current_state: 2, ..Default::default() },
+                    has_taken_unblocked_damage_this_turn: false,
                 },
             ],
         });
@@ -884,7 +889,8 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 0 },
+                    state_machine: EnemyStateMachine { current_state: 0, ..Default::default() },
+                    has_taken_unblocked_damage_this_turn: false,
                 },
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
@@ -895,7 +901,8 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 2 },
+                    state_machine: EnemyStateMachine { current_state: 2, ..Default::default() },
+                    has_taken_unblocked_damage_this_turn: false,
                 },
             ],
         });
@@ -916,7 +923,8 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 0 },
+                    state_machine: EnemyStateMachine { current_state: 0, ..Default::default() },
+                    has_taken_unblocked_damage_this_turn: false,
                 },
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
@@ -927,7 +935,8 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 2 },
+                    state_machine: EnemyStateMachine { current_state: 2, ..Default::default() },
+                    has_taken_unblocked_damage_this_turn: false,
                 },
             ],
         });
@@ -944,7 +953,8 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 0 },
+                    state_machine: EnemyStateMachine { current_state: 0, ..Default::default() },
+                    has_taken_unblocked_damage_this_turn: false,
                 },
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
@@ -955,7 +965,8 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 2 },
+                    state_machine: EnemyStateMachine { current_state: 2, ..Default::default() },
+                    has_taken_unblocked_damage_this_turn: false,
                 },
             ],
         });
@@ -981,7 +992,8 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 0 },
+                    state_machine: EnemyStateMachine { current_state: 0, ..Default::default() },
+                    has_taken_unblocked_damage_this_turn: false,
                 },
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
@@ -992,7 +1004,8 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 2 },
+                    state_machine: EnemyStateMachine { current_state: 2, ..Default::default() },
+                    has_taken_unblocked_damage_this_turn: false,
                 },
             ],
         };

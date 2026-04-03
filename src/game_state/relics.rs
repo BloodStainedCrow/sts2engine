@@ -1,0 +1,57 @@
+use std::u8;
+
+use enum_map::{Enum, EnumMap};
+
+#[derive(Debug, Clone, Copy, Enum, PartialEq, Eq, serde::Deserialize)]
+pub enum RelicPrototype {
+    RingOfTheSnake,
+    CursedPearl,
+    ToxicEgg,
+    OddlySmoothStone,
+    NutritiousSoup,
+    Gorget,
+    MealTicket,
+    BoomingConch,
+    Vajra,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FullRelicState {
+    numbers: EnumMap<RelicPrototype, u8>,
+}
+
+impl FromIterator<RelicPrototype> for FullRelicState {
+    fn from_iter<T: IntoIterator<Item = RelicPrototype>>(iter: T) -> Self {
+        let mut ret = Self::default();
+
+        for proto in iter {
+            ret.numbers[proto] = 0;
+        }
+
+        ret
+    }
+}
+
+impl Default for FullRelicState {
+    fn default() -> Self {
+        Self {
+            numbers: EnumMap::from_fn(|_| u8::MAX),
+        }
+    }
+}
+
+pub type SingleRelicState = Option<u8>;
+
+impl FullRelicState {
+    pub fn get_state(&self, relic: RelicPrototype) -> SingleRelicState {
+        let val = self.numbers[relic];
+
+        (val != u8::MAX).then_some(val)
+    }
+
+    pub fn contains(&self, relic: RelicPrototype) -> bool {
+        let val = self.numbers[relic];
+
+        val != u8::MAX
+    }
+}

@@ -58,10 +58,16 @@ impl EvaluationFunction for TestEngineCurrentHp {
 
         let poison_per_turn =
             f32::from(combat_state.player.creature.statuses[Status::NoxiousFumes]);
-        let damage_done_per_turn = 10.0;
-        let damage_taken_per_turn_base = 5.0
+        let damage_done_per_turn = 10.0
+            + 1.5 * f32::from(combat_state.player.creature.statuses[Status::Tracking])
+            + 0.5 * f32::from(combat_state.player.creature.statuses[Status::Accuracy]);
+        let mut damage_taken_per_turn_base = (5.0 + (f32::from(combat_state.turn_counter)))
             - f32::from(combat_state.player.creature.statuses[Status::Dexterity])
             - f32::from(combat_state.player.creature.statuses[Status::Fasten]) / 2.0;
+
+        if damage_taken_per_turn_base < 0.0 {
+            damage_taken_per_turn_base = 0.0;
+        }
 
         let mut enemies: Vec<_> = combat_state.enemies.iter().collect();
 
@@ -101,8 +107,6 @@ impl EvaluationFunction for TestEngineCurrentHp {
         for start in 0..turns_per_enemy.len() {
             damage += turns_per_enemy[start]
                 * (turns_per_enemy.len() - start) as f32
-                * ((turns_per_enemy.len() + combat_state.turn_counter as usize - start) as f32
-                    / 3.0)
                 * damage_taken_per_turn_base;
         }
 
@@ -116,23 +120,21 @@ impl EvaluationFunction for TestEngineCurrentHp {
 }
 
 fn main() {
-    dbg!(size_of::<CombatState>());
-
+    use game_state::relics::RelicPrototype::*;
     let mut bump: Bump = Bump::new();
     let mut temp_bump = Bump::new();
 
     // TODO: Assume specific fight
     let pre_first_turn_state = game_state::CombatState::get_starting_states(
-        game_state::EncounterPrototype::BowlbugsWeak,
+        game_state::EncounterPrototype::Entomancer,
         &RunInfo {
-            hp: 75,
+            hp: 55,
             deck: vec![in &bump;
                 Card { prototype: CardPrototype::Strike, upgraded: false, enchantment: Some(CardEnchantment::TezcatarasEmber)},
                 Card { prototype: CardPrototype::Strike, upgraded: false, enchantment: Some(CardEnchantment::TezcatarasEmber)},
                 Card { prototype: CardPrototype::Strike, upgraded: false, enchantment: Some(CardEnchantment::TezcatarasEmber)},
                 Card { prototype: CardPrototype::Strike, upgraded: false, enchantment: Some(CardEnchantment::TezcatarasEmber)},
                 Card { prototype: CardPrototype::Strike, upgraded: false, enchantment: Some(CardEnchantment::TezcatarasEmber)},
-                CardPrototype::Defend.get_normal_card(),
                 CardPrototype::Defend.get_normal_card(),
                 CardPrototype::Defend.get_normal_card(),
                 CardPrototype::Defend.get_normal_card(),
@@ -146,9 +148,26 @@ fn main() {
                 CardPrototype::Anticipate.get_normal_card(),
                 Card { prototype: CardPrototype::DodgeAndRoll, upgraded: true, enchantment: None },
                 Card { prototype: CardPrototype::CloakAndDagger, upgraded: true, enchantment: None },
+                Card { prototype: CardPrototype::CloakAndDagger, upgraded: true, enchantment: None },
                 CardPrototype::LeadingStrike.get_normal_card(),
                 CardPrototype::Tracking.get_normal_card(),
+                CardPrototype::SuckerPunch.get_normal_card(),
+                Card { prototype: CardPrototype::Haze, upgraded: true, enchantment: None },
+                CardPrototype::Squash.get_normal_card(),
+                CardPrototype::Accuracy.get_normal_card(),
+                Card { prototype: CardPrototype::Dash, upgraded: true, enchantment: None },
             ],
+            relic_state: [
+                RingOfTheSnake,
+                CursedPearl,
+                ToxicEgg,
+                OddlySmoothStone,
+                NutritiousSoup,
+                Gorget,
+                MealTicket,
+            ]
+            .into_iter()
+            .collect(),
         },
         |hp| true,
         &bump,
@@ -223,7 +242,7 @@ fn main() {
 
         // After applying the action on the game, we need to wait for stuff to settle (I do not know what the game returns while the animations are playing)
         let start = Instant::now();
-        let presumed_done = start + Duration::from_secs(10);
+        let presumed_done = start + Duration::from_secs(4);
 
         // Use the time on calcs insread of just waiting
         if state.entries.len() == 1 {
