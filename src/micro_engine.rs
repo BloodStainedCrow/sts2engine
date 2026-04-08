@@ -10,13 +10,13 @@ use std::{
     time::Duration,
 };
 
-use bumpalo::Bump;
 use itertools::Itertools;
 use serde::de;
 use timer::Timer;
 
 use crate::{
     combat_action::CombatAction,
+    distribution::{self, Distribution},
     game_state::{CombatState, PostCombatState},
 };
 
@@ -232,13 +232,12 @@ impl<F: EvaluationFunction> MicroEngine<F> {
         timeout: Duration,
 
         logger: impl Fn(String),
-        bump: &Bump,
     ) -> (Option<CombatAction>, Option<F::EvalResult>) {
         if state.get_post_game_state().is_some() {
             return (None, None);
         }
 
-        if let Ok(single_action) = state.legal_actions(bump).exactly_one() {
+        if let Ok(single_action) = state.legal_actions().exactly_one() {
             return (Some(single_action), None);
         }
 
@@ -263,7 +262,6 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                 F::EvalResult::MAX,
                 // self.eval_function.best_possible_evaluation(state),
                 depth,
-                bump,
             ) {
                 ControlFlow::Continue(_eval) => {}
                 ControlFlow::Break(()) => {
@@ -317,11 +315,10 @@ impl<F: EvaluationFunction> MicroEngine<F> {
         &mut self,
         state: &CombatState,
         depth: u8,
-        bump: &Bump,
     ) -> HashMap<CombatAction, F::EvalResult> {
         self.stop_signal
             .store(false, std::sync::atomic::Ordering::SeqCst);
-        let legal_actions = state.legal_actions(bump);
+        let legal_actions = state.legal_actions();
 
         legal_actions
             .map(|action| {
@@ -332,7 +329,6 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                         F::EvalResult::MIN,
                         self.eval_function.best_possible_evaluation(state),
                         depth,
-                        bump,
                     )
                     .continue_value()
                     .expect("We are not starting a timer, so this will not break"),
@@ -347,8 +343,6 @@ impl<F: EvaluationFunction> MicroEngine<F> {
         mut alpha: F::EvalResult,
         mut beta: F::EvalResult,
         depth: u8,
-
-        bump: &Bump,
     ) -> ControlFlow<(), F::EvalResult> {
         #[cfg(test)]
         test::STATES_EVALUATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -394,7 +388,7 @@ impl<F: EvaluationFunction> MicroEngine<F> {
             }
         }
 
-        let mut legal_actions = state.legal_actions(bump).collect_vec();
+        let mut legal_actions = state.legal_actions().collect_vec();
 
         assert!(!legal_actions.is_empty(), "{:?}", &state.player.hand);
 
@@ -435,7 +429,7 @@ impl<F: EvaluationFunction> MicroEngine<F> {
         let mut value = F::EvalResult::MIN;
         let mut best = None;
         for action in legal_actions {
-            let expected = self.get_expected((state.clone(), action), alpha, beta, depth, bump)?;
+            let expected = self.get_expected((state.clone(), action), alpha, beta, depth)?;
 
             if expected > value {
                 best = Some(action);
@@ -475,7 +469,6 @@ impl<F: EvaluationFunction> MicroEngine<F> {
         depth: u8,
 
         probing_factor: usize,
-        bump: &Bump,
     ) -> ControlFlow<(), F::EvalResult> {
         if self.stop_signal.load(std::sync::atomic::Ordering::Relaxed) {
             return ControlFlow::Break(());
@@ -519,7 +512,7 @@ impl<F: EvaluationFunction> MicroEngine<F> {
             }
         }
 
-        let mut legal_actions = state.legal_actions(bump).collect_vec();
+        let mut legal_actions = state.legal_actions().collect_vec();
 
         legal_actions.sort_by_key(|action| {
             if let Some(entry) = self.choice_node_transposition_table.get(state, None)
@@ -554,7 +547,7 @@ impl<F: EvaluationFunction> MicroEngine<F> {
 
         // Only consider the best probing_factor actions
         for action in legal_actions.into_iter().take(probing_factor) {
-            let expected = self.get_expected((state.clone(), action), alpha, beta, depth, bump)?;
+            let expected = self.get_expected((state.clone(), action), alpha, beta, depth)?;
 
             if expected > value {
                 value = expected;
@@ -588,8 +581,6 @@ impl<F: EvaluationFunction> MicroEngine<F> {
         mut beta: F::EvalResult,
 
         depth: u8,
-
-        bump: &Bump,
     ) -> ControlFlow<(), F::EvalResult> {
         #[cfg(test)]
         test::STATES_EVALUATED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -636,25 +627,24 @@ impl<F: EvaluationFunction> MicroEngine<F> {
             }
         }
 
-        let mut successors = state.apply(action, bump);
+        let mut successors = state.apply::<distribution::full::Distribution<_>>(action);
         // Sort successors by rising probability (and as such by rising influence on the expected value)
-        successors.entries.sort_by(|a, b| b.1.total_cmp(&a.1));
+        successors.sort_by(|a, b| b.1.total_cmp(&a.1));
         // TODO: Sort?
 
         let mut event_info = successors
-            .entries
-            .iter()
+            .iter_with_odds()
             .map(|(state, chance)| EventInfo {
                 lower_bound: F::EvalResult::MIN,
                 upper_bound: self.eval_function.best_possible_evaluation(state),
-                chance: *chance,
+                chance,
             })
             .collect_vec();
 
         let turn_count = state.turn_counter;
 
         // probe transposition table for successor information
-        for (i, (post_action_state, chance)) in successors.entries.iter().enumerate() {
+        for (i, (post_action_state, chance)) in successors.iter_with_odds().enumerate() {
             if let Some(eval) = self
                 .choice_node_transposition_table
                 .get(&post_action_state, Some(depth - 1))
@@ -734,7 +724,7 @@ impl<F: EvaluationFunction> MicroEngine<F> {
         //             bx,
         //             depth - 1,
         //             PROBING_FACTOR,
-        //             bump,
+        //
         //         )?;
 
         //         event_info[i].lower_bound = search_val;
@@ -751,7 +741,7 @@ impl<F: EvaluationFunction> MicroEngine<F> {
         // }
 
         // Star1 search phase
-        for (i, (post_action_state, chance)) in successors.entries.iter().enumerate() {
+        for (i, (post_action_state, chance)) in successors.iter_with_odds().enumerate() {
             let cur_alpha = event_info.compute_successor_min(i, alpha);
             let cur_beta = event_info.compute_successor_max(i, beta);
 
@@ -769,7 +759,7 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                 cur_beta
             };
 
-            let search_val = self.get_max(post_action_state, ax, bx, depth - 1, bump)?;
+            let search_val = self.get_max(post_action_state, ax, bx, depth - 1)?;
 
             event_info[i].lower_bound = search_val;
             event_info[i].upper_bound = search_val;
@@ -833,7 +823,6 @@ mod test {
 
     use std::{f32, iter, sync::atomic::AtomicUsize};
 
-    use bumpalo::vec;
     use enum_map::EnumMap;
 
     use crate::{
@@ -845,11 +834,10 @@ mod test {
 
     #[test]
     fn ensure_focus_is_preferred() {
-        let bump = Bump::new();
         let spread = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
-            player: Player::default(&bump),
-            enemies: vec![in &bump;
+            player: Player::default(),
+            enemies: vec![
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
@@ -859,7 +847,10 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 0, ..Default::default() },
+                    state_machine: EnemyStateMachine {
+                        current_state: 0,
+                        ..Default::default()
+                    },
                     has_taken_unblocked_damage_this_turn: false,
                 },
                 Enemy {
@@ -871,7 +862,10 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 2, ..Default::default() },
+                    state_machine: EnemyStateMachine {
+                        current_state: 2,
+                        ..Default::default()
+                    },
                     has_taken_unblocked_damage_this_turn: false,
                 },
             ],
@@ -879,8 +873,8 @@ mod test {
         });
         let focus = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
-            player: Player::default(&bump),
-            enemies: vec![in &bump;
+            player: Player::default(),
+            enemies: vec![
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
@@ -890,7 +884,10 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 0, ..Default::default() },
+                    state_machine: EnemyStateMachine {
+                        current_state: 0,
+                        ..Default::default()
+                    },
                     has_taken_unblocked_damage_this_turn: false,
                 },
                 Enemy {
@@ -902,7 +899,10 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 2, ..Default::default() },
+                    state_machine: EnemyStateMachine {
+                        current_state: 2,
+                        ..Default::default()
+                    },
                     has_taken_unblocked_damage_this_turn: false,
                 },
             ],
@@ -914,8 +914,8 @@ mod test {
 
         let spread = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
-            player: Player::default(&bump),
-            enemies: vec![in &bump;
+            player: Player::default(),
+            enemies: vec![
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
@@ -925,7 +925,10 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 0, ..Default::default() },
+                    state_machine: EnemyStateMachine {
+                        current_state: 0,
+                        ..Default::default()
+                    },
                     has_taken_unblocked_damage_this_turn: false,
                 },
                 Enemy {
@@ -937,7 +940,10 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 2, ..Default::default() },
+                    state_machine: EnemyStateMachine {
+                        current_state: 2,
+                        ..Default::default()
+                    },
                     has_taken_unblocked_damage_this_turn: false,
                 },
             ],
@@ -945,8 +951,8 @@ mod test {
         });
         let focus = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
-            player: Player::default(&bump),
-            enemies: vec![in &bump;
+            player: Player::default(),
+            enemies: vec![
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
@@ -956,7 +962,10 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 0, ..Default::default() },
+                    state_machine: EnemyStateMachine {
+                        current_state: 0,
+                        ..Default::default()
+                    },
                     has_taken_unblocked_damage_this_turn: false,
                 },
                 Enemy {
@@ -968,7 +977,10 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 2, ..Default::default() },
+                    state_machine: EnemyStateMachine {
+                        current_state: 2,
+                        ..Default::default()
+                    },
                     has_taken_unblocked_damage_this_turn: false,
                 },
             ],
@@ -980,13 +992,12 @@ mod test {
 
     #[test]
     fn test_action_map() {
-        let bump = Bump::new();
         let mut engine = MicroEngine::new(TestEngineCurrentHp {});
 
         let state = CombatState {
             turn_counter: 0,
-            player: Player::default(&bump),
-            enemies: vec![in &bump;
+            player: Player::default(),
+            enemies: vec![
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
@@ -996,7 +1007,10 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 0, ..Default::default() },
+                    state_machine: EnemyStateMachine {
+                        current_state: 0,
+                        ..Default::default()
+                    },
                     has_taken_unblocked_damage_this_turn: false,
                 },
                 Enemy {
@@ -1008,7 +1022,10 @@ mod test {
                         statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
-                    state_machine: EnemyStateMachine { current_state: 2, ..Default::default() },
+                    state_machine: EnemyStateMachine {
+                        current_state: 2,
+                        ..Default::default()
+                    },
                     has_taken_unblocked_damage_this_turn: false,
                 },
             ],
@@ -1016,7 +1033,7 @@ mod test {
         };
 
         let map = engine
-            .get_action_map(&state, 10, &bump)
+            .get_action_map(&state, 10)
             .into_iter()
             .sorted_by(|(_, a), (_, b)| b.total_cmp(a))
             .collect_vec();
@@ -1026,13 +1043,12 @@ mod test {
 
     #[test]
     fn test_action_map_different_values() {
-        let bump = Bump::new();
         let mut engine = MicroEngine::new(TestEngineCurrentHp {});
 
-        let state = game_state::test::unneeded_blocking(&bump);
+        let state = game_state::test::unneeded_blocking();
 
         let map = engine
-            .get_action_map(&state, 10, &bump)
+            .get_action_map(&state, 10)
             .into_iter()
             .sorted_by(|(_, a), (_, b)| b.total_cmp(a))
             .collect_vec();
@@ -1041,7 +1057,6 @@ mod test {
             f32::MIN,
             engine.eval_function.best_possible_evaluation(&state),
             20,
-            &bump
         ),);
         dbg!(engine.choice_node_transposition_table.get(&state, None));
 
@@ -1050,9 +1065,7 @@ mod test {
 
     #[test]
     fn test_eval() {
-        let mut bump: Bump = Bump::new();
-        let mut temp_bump: Bump = Bump::new();
-        let mut state = game_state::test::simple_test_combat_state(&bump);
+        let mut state = game_state::test::simple_test_combat_state();
 
         let mut engine = MicroEngine::new(TestEngineCurrentHp {});
 
@@ -1063,11 +1076,6 @@ mod test {
             //     .into_iter()
             //     .sorted_by(|(_, a), (_, b)| b.total_cmp(a))
             //     .collect_vec();
-
-            state = state.launder(&temp_bump);
-            bump.reset();
-            state = state.launder(&bump);
-            temp_bump.reset();
 
             println!(
                 "Transposition table hit rate: {}%",
@@ -1083,20 +1091,17 @@ mod test {
                     * 100.0
             );
 
-            let (action, eval) = engine.next_combat_action(
-                &state,
-                99,
-                Duration::from_secs(10),
-                |msg| {
+            let (action, eval) =
+                engine.next_combat_action(&state, 99, Duration::from_secs(10), |msg| {
                     eprintln!("{msg}");
-                },
-                &bump,
-            );
+                });
 
             dbg!(&action);
 
             if let Some(action) = action {
-                let result = state.apply(action, &bump).collapse();
+                let result = state
+                    .apply::<distribution::full::Distribution<_>>(action)
+                    .collapse();
                 dbg!(&result.player.hand);
                 state = result;
             } else {
@@ -1156,15 +1161,12 @@ mod test {
 
     #[test]
     fn next_combat_action_consistent() {
-        let mut bump: Bump = Bump::new();
-
         let all_equal = (0..1000)
             .map(|_| {
-                bump.reset();
-                let state = game_state::test::simple_test_combat_state(&bump);
+                let state = game_state::test::simple_test_combat_state();
                 let mut engine = MicroEngine::new(TestEngineCurrentHp {});
                 engine
-                    .next_combat_action(&state, 3, Duration::from_secs(1_000_000), |_| {}, &bump)
+                    .next_combat_action(&state, 3, Duration::from_secs(1_000_000), |_| {})
                     .0
             })
             .all_equal_value();

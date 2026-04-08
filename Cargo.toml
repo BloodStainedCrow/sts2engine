@@ -10,7 +10,6 @@ strip = false
 
 [dependencies]
 approx = "0.5.1"
-bumpalo = { version = "3.20.2", features = ["allocator_api", "boxed", "collections"] }
 chrono = "0.4.44"
 enum-map = "2.7.3"
 itertools = "0.14.0"
@@ -23,6 +22,10 @@ serde = { version = "1.0.228", features = ["serde_derive"] }
 serde_json = "1.0.149"
 serde_path_to_error = "0.1.20"
 timer = "0.2.0"
+sts2mcts = { path = "../sts2mcts", features = ["nps"] }
+strum = { version = "0.28.0", features = ["derive"] }
+# sts2mcts = { path = "../sts2mcts" }
+
 
 [lints.clippy]
 enum_glob_use = { level = "deny", priority = -1 }

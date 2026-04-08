@@ -549,11 +549,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
+name = "smallvec"
+version = "1.15.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
+
+[[package]]
+name = "strum"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "sts2engine"
 version = "0.1.0"
 dependencies = [
  "approx",
- "bumpalo",
  "chrono",
  "enum-map",
  "itertools",
@@ -565,7 +591,19 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
+ "strum",
+ "sts2mcts",
  "timer",
+]
+
+[[package]]
+name = "sts2mcts"
+version = "0.1.0"
+dependencies = [
+ "rand 0.10.0",
+ "rapidhash",
+ "rayon",
+ "smallvec",
 ]
 
 [[package]]

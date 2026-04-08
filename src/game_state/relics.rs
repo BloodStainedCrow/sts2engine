@@ -1,11 +1,10 @@
-use std::u8;
-
 use enum_map::{Enum, EnumMap};
 
 #[derive(Debug, Clone, Copy, Enum, PartialEq, Eq, serde::Deserialize)]
 pub enum RelicPrototype {
     RingOfTheSnake,
     CursedPearl,
+    Pomander,
     ToxicEgg,
     OddlySmoothStone,
     NutritiousSoup,
@@ -13,6 +12,18 @@ pub enum RelicPrototype {
     MealTicket,
     BoomingConch,
     Vajra,
+    JewelryBox,
+    BronzeScales,
+    Anchor,
+    BagOfMarbles,
+    Orichalcum,
+    BagOfPreparation,
+    StrikeDummy,
+    StoneHumidifier,
+    Bellows,
+    NutritiousOyster,
+    GoldenPearl,
+    Vanbrace,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -47,6 +58,10 @@ impl FullRelicState {
         let val = self.numbers[relic];
 
         (val != u8::MAX).then_some(val)
+    }
+
+    pub fn set_state(&mut self, relic: RelicPrototype, v: u8) {
+        self.numbers[relic] = v;
     }
 
     pub fn contains(&self, relic: RelicPrototype) -> bool {

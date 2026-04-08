@@ -3,43 +3,36 @@ use std::hash::{Hash, Hasher};
 use itertools::Itertools;
 use rapidhash::fast::RapidHasher;
 
-use bumpalo::{
-    Bump,
-    collections::{CollectIn, FromIteratorIn, Vec},
-};
-
 #[derive(Debug, Clone, Eq)]
-pub struct UnorderedCardSet<'bump> {
-    pub cards: Vec<'bump, (Card, u8)>,
+pub struct UnorderedCardSet {
+    pub cards: Vec<(Card, u8)>,
 }
 
-impl<'bump> FromIteratorIn<Card> for UnorderedCardSet<'bump> {
-    type Alloc = &'bump Bump;
-
-    fn from_iter_in<I>(iter: I, bump: Self::Alloc) -> Self
-    where
-        I: IntoIterator<Item = Card>,
-    {
+impl FromIterator<Card> for UnorderedCardSet
+where
+    Card: Hash + Eq,
+{
+    fn from_iter<T: IntoIterator<Item = Card>>(iter: T) -> Self {
         let counts = iter.into_iter().counts();
 
         Self {
             cards: counts
                 .into_iter()
-                .map(|(k, v)| {
+                .map(|(card, count)| {
                     (
-                        k,
-                        v.try_into().expect("More than u8::MAX identical cards???"),
+                        card,
+                        count.try_into().expect("More the u8::MAX of a single card"),
                     )
                 })
-                .collect_in(bump),
+                .collect(),
         }
     }
 }
 
-impl UnorderedCardSet<'_> {
-    pub fn launder(self, new_bump: &Bump) -> UnorderedCardSet<'_> {
+impl UnorderedCardSet {
+    pub fn launder(self) -> UnorderedCardSet {
         UnorderedCardSet {
-            cards: self.cards.into_iter().collect_in(new_bump),
+            cards: self.cards.into_iter().collect(),
         }
     }
 
@@ -100,9 +93,15 @@ impl UnorderedCardSet<'_> {
     pub fn is_empty(&self) -> bool {
         self.iter().next().is_none()
     }
+
+    pub fn upgrade_all(&mut self) {
+        for (card, _count) in &mut self.cards {
+            card.upgraded = true;
+        }
+    }
 }
 
-impl PartialEq for UnorderedCardSet<'_> {
+impl PartialEq for UnorderedCardSet {
     fn eq(&self, other: &Self) -> bool {
         if self.iter().count() != self.iter().count() {
             return false;
@@ -117,7 +116,7 @@ impl PartialEq for UnorderedCardSet<'_> {
     }
 }
 
-impl Hash for UnorderedCardSet<'_> {
+impl Hash for UnorderedCardSet {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         let mut res: u64 = 1;
         for card in &self.cards {
@@ -200,6 +199,7 @@ impl Card {
             (CardPrototype::Dazed, _) => ENERGY[0],
             (CardPrototype::Infection, _) => ENERGY[0],
             (CardPrototype::Wound, _) => ENERGY[0],
+            (CardPrototype::Burn, _) => ENERGY[0],
             (CardPrototype::Greed, _) => ENERGY[0],
             (CardPrototype::PreciseCut, _) => ENERGY[0],
             (CardPrototype::Anticipate, _) => ENERGY[0],
@@ -218,6 +218,19 @@ impl Card {
             (CardPrototype::Dash, _) => ENERGY[2],
             (CardPrototype::Burst, _) => ENERGY[1],
             (CardPrototype::BladeDance, _) => ENERGY[1],
+            (CardPrototype::FranticEscape, _) => todo!("The cost changes when its played!!!"),
+            (CardPrototype::Apotheosis, false) => ENERGY[2],
+            (CardPrototype::Apotheosis, true) => ENERGY[1],
+            (CardPrototype::Abrasive, _) => ENERGY[3],
+            (CardPrototype::Slimed, _) => ENERGY[1],
+            (CardPrototype::Tactician, _) => ENERGY[3],
+            (CardPrototype::DaggerSpray, _) => ENERGY[1],
+            (CardPrototype::Acrobatics, _) => ENERGY[1],
+            (CardPrototype::Ricochet, _) => ENERGY[2],
+            (CardPrototype::StormOfSteel, _) => ENERGY[1],
+            (CardPrototype::Afterimage, _) => ENERGY[1],
+            (CardPrototype::Backstab, _) => ENERGY[0],
+            (CardPrototype::Peck, _) => ENERGY[1],
         };
 
         if self.enchantment == Some(CardEnchantment::TezcatarasEmber) {
@@ -247,6 +260,7 @@ impl Card {
             CardPrototype::Dazed => [LegalTarget::OwnPlayer],
             CardPrototype::Infection => [LegalTarget::OwnPlayer],
             CardPrototype::Wound => [LegalTarget::OwnPlayer],
+            CardPrototype::Burn => [LegalTarget::OwnPlayer],
             CardPrototype::Greed => [LegalTarget::OwnPlayer],
             CardPrototype::PreciseCut => [LegalTarget::Enemy],
             CardPrototype::Anticipate => [LegalTarget::OwnPlayer],
@@ -264,6 +278,18 @@ impl Card {
             CardPrototype::Dash => [LegalTarget::Enemy],
             CardPrototype::Burst => [LegalTarget::OwnPlayer],
             CardPrototype::BladeDance => [LegalTarget::OwnPlayer],
+            CardPrototype::FranticEscape => [LegalTarget::OwnPlayer],
+            CardPrototype::Apotheosis => [LegalTarget::OwnPlayer],
+            CardPrototype::Abrasive => [LegalTarget::OwnPlayer],
+            CardPrototype::Slimed => [LegalTarget::OwnPlayer],
+            CardPrototype::Tactician => [LegalTarget::OwnPlayer],
+            CardPrototype::DaggerSpray => [LegalTarget::OwnPlayer],
+            CardPrototype::Acrobatics => [LegalTarget::OwnPlayer],
+            CardPrototype::Ricochet => [LegalTarget::OwnPlayer],
+            CardPrototype::StormOfSteel => [LegalTarget::OwnPlayer],
+            CardPrototype::Afterimage => [LegalTarget::OwnPlayer],
+            CardPrototype::Backstab => [LegalTarget::Enemy],
+            CardPrototype::Peck => [LegalTarget::Enemy],
         }
         .into_iter()
     }
@@ -287,6 +313,7 @@ impl Card {
             CardPrototype::Dazed => Special,
             CardPrototype::Infection => Special,
             CardPrototype::Wound => Special,
+            CardPrototype::Burn => Special,
             CardPrototype::Greed => Special,
             CardPrototype::PreciseCut => Uncommon,
             CardPrototype::Anticipate => Common,
@@ -304,6 +331,27 @@ impl Card {
             CardPrototype::Dash => Uncommon,
             CardPrototype::Burst => Rare,
             CardPrototype::BladeDance => Common,
+            CardPrototype::FranticEscape => Special,
+            CardPrototype::Apotheosis => Special,
+            CardPrototype::Abrasive => Rare,
+            CardPrototype::Slimed => Special,
+            CardPrototype::Tactician => Uncommon,
+            CardPrototype::DaggerSpray => Common,
+            CardPrototype::Acrobatics => Common,
+            CardPrototype::Ricochet => Common,
+            CardPrototype::StormOfSteel => Rare,
+            CardPrototype::Afterimage => Rare,
+            CardPrototype::Backstab => Uncommon,
+            CardPrototype::Peck => Special,
+        }
+    }
+
+    pub fn has_innate(self) -> bool {
+        match self.prototype {
+            CardPrototype::Apotheosis => true,
+            CardPrototype::Afterimage => self.upgraded,
+            CardPrototype::Backstab => true,
+            _ => false,
         }
     }
 
@@ -314,6 +362,7 @@ impl Card {
             CardPrototype::Infection => true,
             CardPrototype::Greed => true,
             CardPrototype::Wound => true,
+            CardPrototype::Burn => true,
             _ => false,
         }
     }
@@ -322,6 +371,9 @@ impl Card {
         match self.prototype {
             CardPrototype::Shiv => true,
             CardPrototype::BladeDance => true,
+            CardPrototype::Apotheosis => true,
+            CardPrototype::Slimed => true,
+            CardPrototype::Backstab => true,
             _ => false,
         }
     }
@@ -329,6 +381,9 @@ impl Card {
     pub fn has_sly(self) -> bool {
         match self.prototype {
             CardPrototype::Haze => true,
+            CardPrototype::Abrasive => true,
+            CardPrototype::Tactician => true,
+            CardPrototype::Ricochet => true,
             _ => false,
         }
     }
@@ -376,6 +431,8 @@ pub enum CardPrototype {
     Dazed,
     Infection,
     Wound,
+    Burn,
+    Slimed,
     Greed,
     PreciseCut,
     Anticipate,
@@ -393,6 +450,17 @@ pub enum CardPrototype {
     Dash,
     Burst,
     BladeDance,
+    FranticEscape,
+    Apotheosis,
+    Abrasive,
+    Tactician,
+    DaggerSpray,
+    Acrobatics,
+    Ricochet,
+    StormOfSteel,
+    Afterimage,
+    Backstab,
+    Peck,
 }
 
 impl CardPrototype {
@@ -424,6 +492,7 @@ impl CardPrototype {
             Self::Dazed => Status,
             Self::Infection => Status,
             Self::Wound => Status,
+            Self::Burn => Status,
             Self::Greed => Curse,
             Self::Anticipate => Skill,
             Self::NoxiousFumes => Power,
@@ -440,6 +509,18 @@ impl CardPrototype {
             Self::Dash => Attack,
             Self::Burst => Skill,
             Self::BladeDance => Skill,
+            Self::FranticEscape => Status,
+            Self::Apotheosis => Skill,
+            Self::Abrasive => Power,
+            Self::Slimed => Status,
+            Self::Tactician => Skill,
+            Self::DaggerSpray => Attack,
+            Self::Acrobatics => Skill,
+            Self::Ricochet => Attack,
+            Self::StormOfSteel => Skill,
+            Self::Afterimage => Power,
+            Self::Backstab => Attack,
+            Self::Peck => Attack,
         }
     }
 }
