@@ -141,7 +141,11 @@ fn run_mcts() {
             state.dedup();
             let real_state_res = comm.find_valid_combat_states(state.into_values().collect());
 
-            let real_state = real_state_res.unwrap();
+            let Ok(real_state) = real_state_res else {
+                println!("No valid option!");
+                // Lets assume we failed because the combat is over
+                break;
+            };
 
             if real_state.get_post_game_state().is_some() {
                 break;
@@ -157,7 +161,7 @@ fn run_mcts() {
             comm.apply_action(action);
 
             // After applying the action on the game, we need to wait for stuff to settle (I do not know what the game returns while the animations are playing)
-            // TODO: Use the time on calcs insread of just waiting
+            // TODO: Use the time on calcs instead of just waiting
             // engine.par_search(Duration::from_secs(4));
 
             thread::sleep(Duration::from_secs(1));
