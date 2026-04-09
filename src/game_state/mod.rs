@@ -359,31 +359,31 @@ impl CombatState {
                             .clone()
                             .cartesian_product([false, true])
                             .map(|(mut enemies, swap)| {
-                        let mut state = state.clone();
+                                let mut state = state.clone();
 
                                 if swap {
                                     enemies.reverse();
                                 }
 
-                        for (enemy, hp, starting_action) in enemies {
-                            state.enemies.push(Enemy {
-                                prototype: enemy,
-                                creature: Creature {
-                                    hp,
-                                    max_hp: hp,
-                                    block: 0,
-                                    statuses: EnumMap::default(),
-                                },
-                                has_acted_this_turn: false,
-                                state_machine: EnemyStateMachine {
-                                    current_state: starting_action,
-                                    ..Default::default()
-                                },
-                                has_taken_unblocked_damage_this_turn: false,
-                            });
-                        }
+                                for (enemy, hp, starting_action) in enemies {
+                                    state.enemies.push(Enemy {
+                                        prototype: enemy,
+                                        creature: Creature {
+                                            hp,
+                                            max_hp: hp,
+                                            block: 0,
+                                            statuses: EnumMap::default(),
+                                        },
+                                        has_acted_this_turn: false,
+                                        state_machine: EnemyStateMachine {
+                                            current_state: starting_action,
+                                            ..Default::default()
+                                        },
+                                        has_taken_unblocked_damage_this_turn: false,
+                                    });
+                                }
 
-                        state
+                                state
                             }),
                     )
                 });
@@ -1491,6 +1491,12 @@ impl CombatState {
 
             self.player.draw_pile.append(&mut self.player.discard_pile);
 
+            if self.relic_state.contains(RelicPrototype::BiiigHug) {
+                self.player
+                    .draw_pile
+                    .add_card(CardPrototype::Soot.get_normal_card());
+            }
+
             self.draw_single_card()
         } else {
             let cards = self.player.draw_pile.iter_counts().sorted_by_key(|v| v.0);
@@ -1516,6 +1522,12 @@ impl CombatState {
         // TODO: Triggers
 
         self.player.draw_pile.append(&mut self.player.discard_pile);
+
+        if self.relic_state.contains(RelicPrototype::BiiigHug) {
+            self.player
+                .draw_pile
+                .add_card(CardPrototype::Soot.get_normal_card());
+        }
 
         Distribution::single_value(self)
     }
@@ -1734,6 +1746,9 @@ impl CombatState {
             self.player.creature.block += 6;
         }
 
+        self.relic_state
+            .set_state_if_present(RelicPrototype::Shuriken, 0);
+
         self.player.creature.block += u16::try_from(self.player.creature.statuses[Status::Plating])
             .expect("Plating cannot be negative");
 
@@ -1757,18 +1772,10 @@ impl CombatState {
 
         let mut status_diff: EnumMap<Status, i16> = EnumMap::default();
         for (status, count) in &mut self.player.creature.statuses {
-            // if self.player.skip_next_duration_tick[status] {
-            //     self.player.skip_next_duration_tick[status] = false;
-            //     continue;
-            // }
-
             match status {
-                Status::Vulnerable => decrease_non_neg(count),
-                Status::Weak => decrease_non_neg(count),
                 Status::CorrosiveWave => {
                     *count = 0;
                 }
-                Status::Frail => decrease_non_neg(count),
                 Status::Territorial => {
                     status_diff[Status::Strength] += *count;
                 }
@@ -1966,6 +1973,21 @@ impl CombatState {
     >(
         mut self,
     ) -> Distribution {
+        for (status, count) in &mut self.player.creature.statuses {
+            if self.player.skip_next_duration_tick[status] {
+                self.player.skip_next_duration_tick[status] = false;
+                continue;
+            }
+
+            match status {
+                Status::Vulnerable => decrease_non_neg(count),
+                Status::Weak => decrease_non_neg(count),
+                Status::Frail => decrease_non_neg(count),
+
+                _ => {}
+            }
+        }
+
         for enemy in &mut self.enemies {
             enemy.has_taken_unblocked_damage_this_turn = false;
 
@@ -1984,12 +2006,15 @@ impl CombatState {
                         status_diff[Status::Dexterity] -= *count;
                         *count = 0;
                     }
+                    Status::PiercingWail => {
+                        status_diff[Status::Strength] += *count;
+                        *count = 0;
+                    }
 
                     _ => {}
                 }
             }
-            for (v, count) in self
-                .player
+            for (v, count) in enemy
                 .creature
                 .statuses
                 .values_mut()
@@ -2077,8 +2102,10 @@ impl CombatState {
         let state = state.flat_map_simple(Self::draw_cards_for_turn);
 
         let state = state.flat_map_simple(|state| {
-            // TODO: Relics
-            if state.turn_counter == 1 && state.relic_state.contains(RelicPrototype::RingOfTheSnake)
+            // NOTE(BSC): This assumes that it is not possible to have Snake and Drake at the same time!
+            if state.turn_counter == 1
+                && (state.relic_state.contains(RelicPrototype::RingOfTheSnake)
+                    || state.relic_state.contains(RelicPrototype::RingOfTheDrake))
             {
                 let mut state = Distribution::single_value(state);
                 for _ in 0..2 {
@@ -2089,6 +2116,13 @@ impl CombatState {
             } else {
                 Distribution::single_value(state)
             }
+        });
+
+        let state = state.map(|mut state| {
+            if state.turn_counter == 1 && (state.relic_state.contains(RelicPrototype::Lantern)) {
+                state.player.energy += 1;
+            }
+            state
         });
 
         state
@@ -2146,16 +2180,6 @@ impl CombatState {
         self.on_draw_card()
     }
 
-    fn shuffle_discard_into_draw<
-        Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
-    >(
-        mut self,
-    ) -> Distribution {
-        self.player.draw_pile.append(&mut self.player.discard_pile);
-
-        Distribution::single_value(self)
-    }
-
     // The card must already be removed from whereever it came from, so we take it by value here to express that
     #[allow(clippy::needless_pass_by_value)]
     fn play_card<
@@ -2183,6 +2207,8 @@ impl CombatState {
             CardPrototype::Wound => unreachable!("Wound is unplayable"),
             CardPrototype::Greed => unreachable!("Greed is unplayable"),
             CardPrototype::Burn => unreachable!("Burn is unplayable"),
+            CardPrototype::Soot => unreachable!("Soot is unplayable"),
+            CardPrototype::SpoilsMap => unreachable!("SpoilsMap is unplayable"),
             CardPrototype::Slimed => state.flat_map_simple(Self::draw_single_card),
             CardPrototype::Strike => {
                 let target = target.unwrap();
@@ -2647,6 +2673,22 @@ impl CombatState {
                     })
                 })
             }
+            CardPrototype::PiercingWail => {
+                assert!(target.is_none());
+
+                state.flat_map_simple(|state| {
+                    let amount = if card.upgraded { 8 } else { 6 };
+
+                    state.for_all_enemies(|state, enemy_index| {
+                        let state: Distribution =
+                            state.apply_status_to_enemy(enemy_index, Status::Strength, -amount);
+
+                        state.flat_map_simple(|state| {
+                            state.apply_status_to_enemy(enemy_index, Status::PiercingWail, amount)
+                        })
+                    })
+                })
+            }
             CardPrototype::FranticEscape => {
                 assert!(target.is_none());
 
@@ -2748,6 +2790,30 @@ impl CombatState {
                     })
                 })
             }
+            CardPrototype::Flachettes => {
+                let target = target.unwrap();
+
+                let base_dmg = if card.upgraded { 7 } else { 5 };
+
+                state.flat_map_simple(|state| {
+                    let repeats = state
+                        .player
+                        .hand
+                        .iter_counts()
+                        .filter_map(|(card, count)| {
+                            (card.prototype.get_kind() == CardKind::Skill)
+                                .then_some(usize::from(count))
+                        })
+                        .sum();
+                    state.repeat_single_enemy_cancel_if_dead(target, repeats, |state, enemy| {
+                        state.apply_attack_damage(
+                            CharacterIndex::Player,
+                            base_dmg,
+                            CharacterIndex::Enemy(enemy),
+                        )
+                    })
+                })
+            }
             CardPrototype::StormOfSteel => {
                 assert!(target.is_none());
 
@@ -2773,6 +2839,21 @@ impl CombatState {
         };
 
         let mut state = state.flat_map_simple(Self::on_any_card_played);
+
+        state = state.map(|mut state| {
+            if card.prototype.get_kind() == CardKind::Attack
+                && let Some(v) = state.relic_state.get_state(RelicPrototype::Shuriken)
+            {
+                if v == 2 {
+                    state.player.creature.statuses[Status::Strength] += 1;
+                    state.relic_state.set_state(RelicPrototype::Shuriken, 0);
+                } else {
+                    state.relic_state.set_state(RelicPrototype::Shuriken, v + 1);
+                }
+            }
+
+            state
+        });
 
         if is_raw_play && card.prototype.get_kind() == CardKind::Skill {
             state = state.flat_map_simple(|mut state| {
@@ -3333,6 +3414,8 @@ pub enum Status {
     Thorns,
     #[serde(rename = "AFTERIMAGE_POWER")]
     Afterimage,
+    #[serde(rename = "PIERCING_WAIL_POWER")]
+    PiercingWail,
 
     #[serde(rename = "MINION_POWER")]
     Minion,

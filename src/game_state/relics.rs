@@ -3,6 +3,7 @@ use enum_map::{Enum, EnumMap};
 #[derive(Debug, Clone, Copy, Enum, PartialEq, Eq, serde::Deserialize)]
 pub enum RelicPrototype {
     RingOfTheSnake,
+    RingOfTheDrake,
     CursedPearl,
     Pomander,
     ToxicEgg,
@@ -24,6 +25,12 @@ pub enum RelicPrototype {
     NutritiousOyster,
     GoldenPearl,
     Vanbrace,
+    LostCoffer,
+    BloodVial,
+    Lantern,
+    Shuriken,
+    Whetstone,
+    BiiigHug,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -62,6 +69,12 @@ impl FullRelicState {
 
     pub fn set_state(&mut self, relic: RelicPrototype, v: u8) {
         self.numbers[relic] = v;
+    }
+
+    pub fn set_state_if_present(&mut self, relic: RelicPrototype, v: u8) {
+        if self.contains(relic) {
+            self.numbers[relic] = v;
+        }
     }
 
     pub fn contains(&self, relic: RelicPrototype) -> bool {

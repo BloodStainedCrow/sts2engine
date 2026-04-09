@@ -200,6 +200,7 @@ impl Card {
             (CardPrototype::Infection, _) => ENERGY[0],
             (CardPrototype::Wound, _) => ENERGY[0],
             (CardPrototype::Burn, _) => ENERGY[0],
+            (CardPrototype::Soot, _) => ENERGY[0],
             (CardPrototype::Greed, _) => ENERGY[0],
             (CardPrototype::PreciseCut, _) => ENERGY[0],
             (CardPrototype::Anticipate, _) => ENERGY[0],
@@ -231,6 +232,9 @@ impl Card {
             (CardPrototype::Afterimage, _) => ENERGY[1],
             (CardPrototype::Backstab, _) => ENERGY[0],
             (CardPrototype::Peck, _) => ENERGY[1],
+            (CardPrototype::Flachettes, _) => ENERGY[1],
+            (CardPrototype::SpoilsMap, _) => ENERGY[0],
+            (CardPrototype::PiercingWail, _) => ENERGY[1],
         };
 
         if self.enchantment == Some(CardEnchantment::TezcatarasEmber) {
@@ -261,6 +265,7 @@ impl Card {
             CardPrototype::Infection => [LegalTarget::OwnPlayer],
             CardPrototype::Wound => [LegalTarget::OwnPlayer],
             CardPrototype::Burn => [LegalTarget::OwnPlayer],
+            CardPrototype::Soot => [LegalTarget::OwnPlayer],
             CardPrototype::Greed => [LegalTarget::OwnPlayer],
             CardPrototype::PreciseCut => [LegalTarget::Enemy],
             CardPrototype::Anticipate => [LegalTarget::OwnPlayer],
@@ -290,6 +295,9 @@ impl Card {
             CardPrototype::Afterimage => [LegalTarget::OwnPlayer],
             CardPrototype::Backstab => [LegalTarget::Enemy],
             CardPrototype::Peck => [LegalTarget::Enemy],
+            CardPrototype::Flachettes => [LegalTarget::Enemy],
+            CardPrototype::SpoilsMap => [LegalTarget::OwnPlayer],
+            CardPrototype::PiercingWail => [LegalTarget::OwnPlayer],
         }
         .into_iter()
     }
@@ -314,6 +322,7 @@ impl Card {
             CardPrototype::Infection => Special,
             CardPrototype::Wound => Special,
             CardPrototype::Burn => Special,
+            CardPrototype::Soot => Special,
             CardPrototype::Greed => Special,
             CardPrototype::PreciseCut => Uncommon,
             CardPrototype::Anticipate => Common,
@@ -343,6 +352,9 @@ impl Card {
             CardPrototype::Afterimage => Rare,
             CardPrototype::Backstab => Uncommon,
             CardPrototype::Peck => Special,
+            CardPrototype::Flachettes => Uncommon,
+            CardPrototype::SpoilsMap => Special,
+            CardPrototype::PiercingWail => Common,
         }
     }
 
@@ -363,6 +375,8 @@ impl Card {
             CardPrototype::Greed => true,
             CardPrototype::Wound => true,
             CardPrototype::Burn => true,
+            CardPrototype::Soot => true,
+            CardPrototype::SpoilsMap => true,
             _ => false,
         }
     }
@@ -374,6 +388,7 @@ impl Card {
             CardPrototype::Apotheosis => true,
             CardPrototype::Slimed => true,
             CardPrototype::Backstab => true,
+            CardPrototype::PiercingWail => true,
             _ => false,
         }
     }
@@ -433,6 +448,7 @@ pub enum CardPrototype {
     Wound,
     Burn,
     Slimed,
+    Soot,
     Greed,
     PreciseCut,
     Anticipate,
@@ -461,6 +477,9 @@ pub enum CardPrototype {
     Afterimage,
     Backstab,
     Peck,
+    Flachettes,
+    SpoilsMap,
+    PiercingWail,
 }
 
 impl CardPrototype {
@@ -493,6 +512,7 @@ impl CardPrototype {
             Self::Infection => Status,
             Self::Wound => Status,
             Self::Burn => Status,
+            Self::Soot => Status,
             Self::Greed => Curse,
             Self::Anticipate => Skill,
             Self::NoxiousFumes => Power,
@@ -521,6 +541,9 @@ impl CardPrototype {
             Self::Afterimage => Power,
             Self::Backstab => Attack,
             Self::Peck => Attack,
+            Self::Flachettes => Attack,
+            Self::SpoilsMap => Quest,
+            Self::PiercingWail => Skill,
         }
     }
 }
@@ -532,4 +555,5 @@ pub enum CardKind {
     Power,
     Status,
     Curse,
+    Quest,
 }

@@ -109,7 +109,16 @@ impl Comm {
                     enchantment: None,
                 })
                 .collect(),
-            relic_state: [RingOfTheSnake].into_iter().collect(),
+            relic_state: [
+                RingOfTheSnake,
+                LostCoffer,
+                Shuriken,
+                Whetstone,
+                Anchor,
+                BiiigHug,
+            ]
+            .into_iter()
+            .collect(),
         }
     }
 
