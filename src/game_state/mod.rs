@@ -354,8 +354,16 @@ impl CombatState {
                 });
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(typ_and_hp_action.clone().map(|enemies| {
+                    Distribution::equal_chance(
+                        typ_and_hp_action
+                            .clone()
+                            .cartesian_product([false, true])
+                            .map(|(mut enemies, swap)| {
                         let mut state = state.clone();
+
+                                if swap {
+                                    enemies.reverse();
+                                }
 
                         for (enemy, hp, starting_action) in enemies {
                             state.enemies.push(Enemy {
@@ -376,7 +384,8 @@ impl CombatState {
                         }
 
                         state
-                    }))
+                            }),
+                    )
                 });
 
                 state
