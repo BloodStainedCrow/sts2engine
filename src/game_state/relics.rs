@@ -31,6 +31,8 @@ pub enum RelicPrototype {
     Shuriken,
     Whetstone,
     BiiigHug,
+    StoneCalendar,
+    PaelsBlood,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

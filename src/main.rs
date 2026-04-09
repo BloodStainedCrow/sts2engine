@@ -164,7 +164,7 @@ fn run_mcts() {
             // TODO: Use the time on calcs instead of just waiting
             // engine.par_search(Duration::from_secs(4));
 
-            thread::sleep(Duration::from_secs(1));
+            thread::sleep(Duration::from_secs(2));
         }
 
         println!("No more action, is the fight over?");

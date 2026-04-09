@@ -139,9 +139,36 @@ pub struct Card {
     pub enchantment: Option<CardEnchantment>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize)]
+#[serde(tag = "kind")]
+#[serde(rename_all(deserialize = "SCREAMING_SNAKE_CASE"))]
 pub enum CardEnchantment {
     TezcatarasEmber,
+    Momentum { amount: u8, this_combat_value: u16 },
+    Swift { amount: u8 },
+}
+
+pub trait EnchantmentExt {
+    fn get_bonus_damage(&self) -> u16;
+    fn draw_after_play(&self) -> u8;
+}
+
+impl EnchantmentExt for Option<CardEnchantment> {
+    fn get_bonus_damage(&self) -> u16 {
+        match self {
+            Some(CardEnchantment::Momentum {
+                this_combat_value, ..
+            }) => *this_combat_value,
+            _ => 0,
+        }
+    }
+
+    fn draw_after_play(&self) -> u8 {
+        match self {
+            Some(CardEnchantment::Swift { amount, .. }) => *amount,
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -235,6 +262,9 @@ impl Card {
             (CardPrototype::Flachettes, _) => ENERGY[1],
             (CardPrototype::SpoilsMap, _) => ENERGY[0],
             (CardPrototype::PiercingWail, _) => ENERGY[1],
+            (CardPrototype::Equilibrium, _) => ENERGY[2],
+            (CardPrototype::Deflect, _) => ENERGY[0],
+            (CardPrototype::Assassinate, _) => ENERGY[0],
         };
 
         if self.enchantment == Some(CardEnchantment::TezcatarasEmber) {
@@ -298,6 +328,9 @@ impl Card {
             CardPrototype::Flachettes => [LegalTarget::Enemy],
             CardPrototype::SpoilsMap => [LegalTarget::OwnPlayer],
             CardPrototype::PiercingWail => [LegalTarget::OwnPlayer],
+            CardPrototype::Equilibrium => [LegalTarget::OwnPlayer],
+            CardPrototype::Deflect => [LegalTarget::OwnPlayer],
+            CardPrototype::Assassinate => [LegalTarget::Enemy],
         }
         .into_iter()
     }
@@ -355,6 +388,9 @@ impl Card {
             CardPrototype::Flachettes => Uncommon,
             CardPrototype::SpoilsMap => Special,
             CardPrototype::PiercingWail => Common,
+            CardPrototype::Equilibrium => Uncommon,
+            CardPrototype::Deflect => Common,
+            CardPrototype::Assassinate => Rare,
         }
     }
 
@@ -363,6 +399,7 @@ impl Card {
             CardPrototype::Apotheosis => true,
             CardPrototype::Afterimage => self.upgraded,
             CardPrototype::Backstab => true,
+            CardPrototype::Assassinate => true,
             _ => false,
         }
     }
@@ -389,6 +426,7 @@ impl Card {
             CardPrototype::Slimed => true,
             CardPrototype::Backstab => true,
             CardPrototype::PiercingWail => true,
+            CardPrototype::Assassinate => true,
             _ => false,
         }
     }
@@ -480,6 +518,9 @@ pub enum CardPrototype {
     Flachettes,
     SpoilsMap,
     PiercingWail,
+    Equilibrium,
+    Deflect,
+    Assassinate,
 }
 
 impl CardPrototype {
@@ -544,6 +585,9 @@ impl CardPrototype {
             Self::Flachettes => Attack,
             Self::SpoilsMap => Quest,
             Self::PiercingWail => Skill,
+            Self::Equilibrium => Skill,
+            Self::Deflect => Skill,
+            Self::Assassinate => Attack,
         }
     }
 }

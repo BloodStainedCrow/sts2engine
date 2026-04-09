@@ -22,8 +22,8 @@ serde = { version = "1.0.228", features = ["serde_derive"] }
 serde_json = "1.0.149"
 serde_path_to_error = "0.1.20"
 timer = "0.2.0"
-sts2mcts = { path = "../sts2mcts", features = ["nps"] }
 strum = { version = "0.28.0", features = ["derive"] }
+sts2mcts = { path = "../sts2mcts", features = ["nps"] }
 # sts2mcts = { path = "../sts2mcts" }
 
 

@@ -851,7 +851,7 @@ mod test {
                         current_state: 0,
                         ..Default::default()
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
@@ -866,7 +866,7 @@ mod test {
                         current_state: 2,
                         ..Default::default()
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 },
             ],
             relic_state: iter::empty().collect(),
@@ -888,7 +888,7 @@ mod test {
                         current_state: 0,
                         ..Default::default()
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
@@ -903,7 +903,7 @@ mod test {
                         current_state: 2,
                         ..Default::default()
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 },
             ],
             relic_state: iter::empty().collect(),
@@ -929,7 +929,7 @@ mod test {
                         current_state: 0,
                         ..Default::default()
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
@@ -944,7 +944,7 @@ mod test {
                         current_state: 2,
                         ..Default::default()
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 },
             ],
             relic_state: iter::empty().collect(),
@@ -966,7 +966,7 @@ mod test {
                         current_state: 0,
                         ..Default::default()
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
@@ -981,7 +981,7 @@ mod test {
                         current_state: 2,
                         ..Default::default()
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 },
             ],
             relic_state: iter::empty().collect(),
@@ -1011,7 +1011,7 @@ mod test {
                         current_state: 0,
                         ..Default::default()
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
                     prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
@@ -1026,7 +1026,7 @@ mod test {
                         current_state: 2,
                         ..Default::default()
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 },
             ],
             relic_state: iter::empty().collect(),

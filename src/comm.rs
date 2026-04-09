@@ -10,7 +10,7 @@ use crate::{
     game_state::{
         self, CombatState, EncounterPrototype, Enemy, EnemyAction, EnemyPrototype, Player, RunInfo,
         Status,
-        cards::{Card, CardPrototype, UnorderedCardSet},
+        cards::{Card, CardEnchantment, CardPrototype, UnorderedCardSet},
     },
 };
 
@@ -45,7 +45,7 @@ impl Comm {
         let options = EncounterPrototype::iter()
             .filter(|encounter| {
                 // TODO: Only for testing
-                encounter.get_act() == crate::game_state::Act::Act1
+                encounter.is_finished_implementing()
             })
             .map(|encounter_prototype| {
                 (
@@ -105,20 +105,10 @@ impl Comm {
                 .map(|card| Card {
                     prototype: card.kind,
                     upgraded: card.upgraded,
-                    // TODO:
-                    enchantment: None,
+                    enchantment: card.enchantment,
                 })
                 .collect(),
-            relic_state: [
-                RingOfTheSnake,
-                LostCoffer,
-                Shuriken,
-                Whetstone,
-                Anchor,
-                BiiigHug,
-            ]
-            .into_iter()
-            .collect(),
+            relic_state: [RingOfTheSnake].into_iter().collect(),
         }
     }
 
@@ -156,18 +146,34 @@ impl Comm {
             // let mut options = is_single_choice(options)?;
 
             let hand = comm.hand();
-            dbg!(&hand);
             options.retain(|state| state.player.hand.satisfies(&hand));
+            if options.is_empty() {
+                dbg!(&hand);
+            }
             println!("Post hand: {}", options.len());
 
-            let draw_pipe = comm.draw_pile();
-            options.retain(|state| state.player.draw_pile.satisfies(&draw_pipe));
+            let draw_pile = comm.draw_pile();
+            options.retain(|state| state.player.draw_pile.satisfies(&draw_pile));
+            if options.is_empty() {
+                dbg!(&draw_pile);
+            }
             println!("Post Draw pile: {}", options.len());
+
+            // FIXME: I currently do the discard pile wrong for cards with choices.
+            // let discard_pile = comm.discard_pile();
+            // options.retain(|state| state.player.discard_pile.satisfies(&discard_pile));
+            // if options.is_empty() {
+            //     dbg!(&discard_pile);
+            // }
+            // println!("Post Discard pile: {}", options.len());
 
             // TODO: Other piles (draw/discard/exhaust)
 
             let player = comm.get_player_info();
             options.retain(|state| player.satisfies(&state.player));
+            if options.is_empty() {
+                dbg!(player);
+            }
             println!("Post statuses: {}", options.len());
 
             let remaining_options = is_single_choice(options)?;
@@ -400,6 +406,7 @@ impl EnemyInfo {
 struct CardInfo {
     kind: CardPrototype,
     upgraded: bool,
+    enchantment: Option<CardEnchantment>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -584,6 +591,26 @@ impl RCONComm {
         state.draw
     }
 
+    fn discard_pile(&mut self) -> vec::Vec<CardInfo> {
+        let res = self
+            .client
+            .execute(RCONRequest::new("get_combat_card_state".to_owned()))
+            .expect("RCON Failed")
+            .body;
+
+        let jd = &mut serde_json::Deserializer::from_str(&res);
+
+        let result: Result<CardState, _> = serde_path_to_error::deserialize(jd);
+        let state = match result {
+            Ok(v) => v,
+            Err(err) => {
+                panic!("{} with source: {res}", err.path());
+            }
+        };
+
+        state.discard
+    }
+
     fn apply_action(&mut self, action: CombatAction) {
         let command = match action {
             CombatAction::PlayCard { card, target } => {
@@ -591,7 +618,11 @@ impl RCONComm {
 
                 let card_index = hand
                     .iter()
-                    .position(|info| info.kind == card.prototype)
+                    .position(|info| {
+                        info.kind == card.prototype
+                            && info.upgraded == card.upgraded
+                            && info.enchantment == card.enchantment
+                    })
                     .unwrap_or_else(|| panic!("Could not find card {card:?} in game hand"));
 
                 match target {
@@ -605,7 +636,11 @@ impl RCONComm {
 
                 let card_index = hand
                     .iter()
-                    .position(|info| info.kind == card.prototype && info.upgraded == card.upgraded)
+                    .position(|info| {
+                        info.kind == card.prototype
+                            && info.upgraded == card.upgraded
+                            && info.enchantment == card.enchantment
+                    })
                     .unwrap_or_else(|| panic!("Could not find card {card:?} in game hand"));
 
                 format!("choose_card_from_hand {card_index}")

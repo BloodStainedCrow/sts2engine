@@ -7,7 +7,8 @@ use strum::EnumIter;
 
 use crate::distribution;
 use crate::game_state::cards::{
-    Card, CardKind, CardPrototype, Cost, CostVal, LegalTarget, UnorderedCardSet,
+    Card, CardEnchantment, CardKind, CardPrototype, Cost, CostVal, EnchantmentExt, LegalTarget,
+    UnorderedCardSet,
 };
 use crate::game_state::relics::{FullRelicState, RelicPrototype};
 use crate::{combat_action::CombatAction, distribution::Distribution};
@@ -75,6 +76,7 @@ pub enum EncounterPrototype {
     BowlbugsWeak,
     BowlbugsStrong,
     SoloTunneler,
+    LouseProgenitor,
     InfestedPrism,
     // Mr. Beeeees!!!
     Entomancer,
@@ -97,6 +99,18 @@ pub enum Act {
 }
 
 impl EncounterPrototype {
+    pub fn is_finished_implementing(self) -> bool {
+        use Act::*;
+        match self {
+            EncounterPrototype::SoloTunneler => false,
+            EncounterPrototype::TheLostAndForgotten => false,
+            EncounterPrototype::MechaKnight => false,
+            EncounterPrototype::SoulNexus => false,
+
+            _ => true,
+        }
+    }
+
     pub fn get_act(self) -> Act {
         use Act::*;
         match self {
@@ -116,6 +130,7 @@ impl EncounterPrototype {
             EncounterPrototype::BowlbugsWeak => Act2,
             EncounterPrototype::BowlbugsStrong => Act2,
             EncounterPrototype::SoloTunneler => Act2,
+            EncounterPrototype::LouseProgenitor => Act2,
             EncounterPrototype::InfestedPrism => Act2,
             EncounterPrototype::Entomancer => Act2,
             EncounterPrototype::Chompers => Act2,
@@ -148,6 +163,7 @@ impl EncounterPrototype {
             EncounterPrototype::BowlbugsWeak => false,
             EncounterPrototype::BowlbugsStrong => false,
             EncounterPrototype::SoloTunneler => false,
+            EncounterPrototype::LouseProgenitor => false,
             EncounterPrototype::InfestedPrism => true,
             EncounterPrototype::Entomancer => true,
             EncounterPrototype::Chompers => false,
@@ -227,7 +243,7 @@ impl CombatState {
                             },
                             has_acted_this_turn: false,
                             state_machine: EnemyStateMachine::default(),
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state
@@ -253,7 +269,7 @@ impl CombatState {
                             },
                             has_acted_this_turn: false,
                             state_machine: EnemyStateMachine::default(),
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state
@@ -279,7 +295,7 @@ impl CombatState {
                             },
                             has_acted_this_turn: false,
                             state_machine: EnemyStateMachine::default(),
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state.enemies.push(Enemy {
@@ -292,7 +308,7 @@ impl CombatState {
                             },
                             has_acted_this_turn: false,
                             state_machine: EnemyStateMachine::default(),
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state
@@ -379,7 +395,7 @@ impl CombatState {
                                             current_state: starting_action,
                                             ..Default::default()
                                         },
-                                        has_taken_unblocked_damage_this_turn: false,
+                                        has_taken_unblocked_attack_damage_this_turn: false,
                                     });
                                 }
 
@@ -407,7 +423,7 @@ impl CombatState {
                             },
                             has_acted_this_turn: false,
                             state_machine: EnemyStateMachine::default(),
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state
@@ -437,7 +453,7 @@ impl CombatState {
                             },
                             has_acted_this_turn: false,
                             state_machine: EnemyStateMachine::default(),
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state
@@ -468,7 +484,7 @@ impl CombatState {
                             },
                             has_acted_this_turn: false,
                             state_machine: EnemyStateMachine::default(),
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state
@@ -498,7 +514,7 @@ impl CombatState {
                             },
                             has_acted_this_turn: false,
                             state_machine: EnemyStateMachine::default(),
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state
@@ -524,7 +540,7 @@ impl CombatState {
                             },
                             has_acted_this_turn: false,
                             state_machine: EnemyStateMachine::default(),
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state.enemies.push(Enemy {
@@ -537,7 +553,7 @@ impl CombatState {
                             },
                             has_acted_this_turn: false,
                             state_machine: EnemyStateMachine::default(),
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state
@@ -567,7 +583,7 @@ impl CombatState {
                                 },
                                 has_acted_this_turn: false,
                                 state_machine: EnemyStateMachine::default(),
-                                has_taken_unblocked_damage_this_turn: false,
+                                has_taken_unblocked_attack_damage_this_turn: false,
                             });
 
                             state.enemies.push(Enemy {
@@ -583,7 +599,7 @@ impl CombatState {
                                     current_state,
                                     stunned: 0,
                                 },
-                                has_taken_unblocked_damage_this_turn: false,
+                                has_taken_unblocked_attack_damage_this_turn: false,
                             });
 
                             state
@@ -638,7 +654,7 @@ impl CombatState {
                                 },
                                 has_acted_this_turn: false,
                                 state_machine: EnemyStateMachine::default(),
-                                has_taken_unblocked_damage_this_turn: false,
+                                has_taken_unblocked_attack_damage_this_turn: false,
                             });
                         }
 
@@ -663,7 +679,7 @@ impl CombatState {
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 });
 
                 state
@@ -684,7 +700,7 @@ impl CombatState {
                         },
                         has_acted_this_turn: false,
                         state_machine: EnemyStateMachine::default(),
-                        has_taken_unblocked_damage_this_turn: false,
+                        has_taken_unblocked_attack_damage_this_turn: false,
                     });
 
                     state.enemies.push(Enemy {
@@ -700,7 +716,7 @@ impl CombatState {
                             current_state: 2,
                             stunned: 0,
                         },
-                        has_taken_unblocked_damage_this_turn: false,
+                        has_taken_unblocked_attack_damage_this_turn: false,
                     });
 
                     state.enemies.push(Enemy {
@@ -713,7 +729,7 @@ impl CombatState {
                         },
                         has_acted_this_turn: false,
                         state_machine: EnemyStateMachine::default(),
-                        has_taken_unblocked_damage_this_turn: false,
+                        has_taken_unblocked_attack_damage_this_turn: false,
                     });
 
                     state
@@ -764,7 +780,7 @@ impl CombatState {
                                 },
                                 has_acted_this_turn: false,
                                 state_machine: EnemyStateMachine::default(),
-                                has_taken_unblocked_damage_this_turn: false,
+                                has_taken_unblocked_attack_damage_this_turn: false,
                             });
                         }
 
@@ -825,7 +841,7 @@ impl CombatState {
                                 },
                                 has_acted_this_turn: false,
                                 state_machine: EnemyStateMachine::default(),
-                                has_taken_unblocked_damage_this_turn: false,
+                                has_taken_unblocked_attack_damage_this_turn: false,
                             });
                         }
 
@@ -837,6 +853,36 @@ impl CombatState {
             }
             EncounterPrototype::SoloTunneler => {
                 todo!("Adaptive state machine intent logic (check if we lost all block")
+            }
+            EncounterPrototype::LouseProgenitor => {
+                let hp = 134..=136;
+
+                let state = state.flat_map_simple(|state| {
+                    Distribution::equal_chance(hp.clone().map(|hp| {
+                        let mut state = state.clone();
+
+                        let mut status = EnumMap::default();
+
+                        status[Status::CurlUp] = 14;
+
+                        state.enemies.push(Enemy {
+                            prototype: EnemyPrototype::LouseProgenitor,
+                            creature: Creature {
+                                hp,
+                                max_hp: hp,
+                                block: 0,
+                                statuses: status,
+                            },
+                            has_acted_this_turn: false,
+                            state_machine: EnemyStateMachine::default(),
+                            has_taken_unblocked_attack_damage_this_turn: false,
+                        });
+
+                        state
+                    }))
+                });
+
+                state
             }
             EncounterPrototype::InfestedPrism => state.map(|mut state| {
                 let mut status = EnumMap::default();
@@ -853,7 +899,7 @@ impl CombatState {
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 });
 
                 state
@@ -873,7 +919,7 @@ impl CombatState {
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 });
 
                 state
@@ -902,7 +948,7 @@ impl CombatState {
                                 current_state: 0,
                                 ..Default::default()
                             },
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state.enemies.push(Enemy {
@@ -918,7 +964,7 @@ impl CombatState {
                                 current_state: 1,
                                 ..Default::default()
                             },
-                            has_taken_unblocked_damage_this_turn: false,
+                            has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
                         state
@@ -972,7 +1018,7 @@ impl CombatState {
                                 },
                                 has_acted_this_turn: false,
                                 state_machine: EnemyStateMachine::default(),
-                                has_taken_unblocked_damage_this_turn: false,
+                                has_taken_unblocked_attack_damage_this_turn: false,
                             });
                         }
 
@@ -993,7 +1039,7 @@ impl CombatState {
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 });
 
                 state
@@ -1012,7 +1058,7 @@ impl CombatState {
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 });
                 state.enemies.push(Enemy {
                     prototype: EnemyPrototype::TurretOperator,
@@ -1024,7 +1070,7 @@ impl CombatState {
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 });
 
                 state
@@ -1042,7 +1088,7 @@ impl CombatState {
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 });
 
                 state
@@ -1062,7 +1108,7 @@ impl CombatState {
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 });
 
                 state
@@ -1080,7 +1126,7 @@ impl CombatState {
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 });
 
                 state
@@ -1104,7 +1150,7 @@ impl CombatState {
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 });
                 state.enemies.push(Enemy {
                     prototype: EnemyPrototype::TheForgotten,
@@ -1116,7 +1162,7 @@ impl CombatState {
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                 });
 
                 state
@@ -1198,6 +1244,11 @@ impl CombatState {
             for _ in 0..2 {
                 state = state.flat_map_simple(Self::draw_single_card);
             }
+        }
+
+        if run_info.relic_state.contains(RelicPrototype::Anchor) {
+            state = state
+                .flat_map_simple(|state| state.add_block_to_creature(CharacterIndex::Player, 10));
         }
 
         if run_info.relic_state.contains(RelicPrototype::BagOfMarbles) {
@@ -1492,6 +1543,11 @@ impl CombatState {
             self.player.draw_pile.append(&mut self.player.discard_pile);
 
             if self.relic_state.contains(RelicPrototype::BiiigHug) {
+                // TODO: HUGE INFO:
+                // This Soot is always added at the bottom of the draw pile, not shuffled in.\
+                // I currently ignore this (making BiiigHug quite a bit worse)
+                // This only overestimates the valid resulting states of actions (and therefore cannot lead to desyncs), but it changes the expected value of
+                // states, resulting in subobtimal play.
                 self.player
                     .draw_pile
                     .add_card(CardPrototype::Soot.get_normal_card());
@@ -1539,6 +1595,8 @@ impl CombatState {
     ) -> Distribution {
         if self.player.draw_pile_top_card.is_some()
             || self.player.draw_pile.num_cards() + self.player.discard_pile.num_cards() < 5
+        // TODO: This is just for testing
+        // || true
         {
             // Just do the simple thing for now, to ensure we draw the top card
             let num_cards = 5;
@@ -1737,7 +1795,7 @@ impl CombatState {
     }
 
     fn on_end_player_turn<
-        Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
+        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         mut self,
     ) -> Distribution {
@@ -1768,7 +1826,11 @@ impl CombatState {
             }
         }
 
-        self.player.discard_pile.append(&mut self.player.hand);
+        if self.player.creature.statuses[Status::RetainHand] > 0 {
+            self.player.creature.statuses[Status::RetainHand] -= 1;
+        } else {
+            self.player.discard_pile.append(&mut self.player.hand);
+        }
 
         let mut status_diff: EnumMap<Status, i16> = EnumMap::default();
         for (status, count) in &mut self.player.creature.statuses {
@@ -1801,7 +1863,13 @@ impl CombatState {
             *v += count;
         }
 
-        Distribution::single_value(self)
+        if self.turn_counter == 7 && self.relic_state.contains(RelicPrototype::StoneCalendar) {
+            self.for_all_enemies(|state, index| {
+                state.apply_unsourced_damage(52, CharacterIndex::Enemy(index))
+            })
+        } else {
+            Distribution::single_value(self)
+        }
     }
 
     fn on_start_enemy_turn<
@@ -1989,7 +2057,7 @@ impl CombatState {
         }
 
         for enemy in &mut self.enemies {
-            enemy.has_taken_unblocked_damage_this_turn = false;
+            enemy.has_taken_unblocked_attack_damage_this_turn = false;
 
             let mut status_diff: EnumMap<Status, i16> = EnumMap::default();
 
@@ -2117,6 +2185,14 @@ impl CombatState {
                 Distribution::single_value(state)
             }
         });
+        let state = state.flat_map_simple(|state| {
+            if state.relic_state.contains(RelicPrototype::PaelsBlood) {
+                let state = Distribution::single_value(state);
+                state.flat_map_simple(CombatState::draw_single_card)
+            } else {
+                Distribution::single_value(state)
+            }
+        });
 
         let state = state.map(|mut state| {
             if state.turn_counter == 1 && (state.relic_state.contains(RelicPrototype::Lantern)) {
@@ -2186,11 +2262,11 @@ impl CombatState {
         Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         self,
-        card: Card,
+        mut card: Card,
         target: Option<usize>,
         is_raw_play: bool,
     ) -> Distribution {
-        let mut state = Distribution::single_value(self);
+        let state = Distribution::single_value(self);
 
         // FIXME: Afterimage is rough, since it really needs the playstack, which we do not have properly yet
         // state = state.flat_map_simple(|state| {
@@ -2212,7 +2288,8 @@ impl CombatState {
             CardPrototype::Slimed => state.flat_map_simple(Self::draw_single_card),
             CardPrototype::Strike => {
                 let target = target.unwrap();
-                let base_amount = if card.upgraded { 9 } else { 6 };
+                let base_amount =
+                    if card.upgraded { 9 } else { 6 } + card.enchantment.get_bonus_damage();
 
                 state.flat_map_simple(|state| {
                     state.apply_attack_damage(
@@ -2224,7 +2301,8 @@ impl CombatState {
             }
             CardPrototype::Backstab => {
                 let target = target.unwrap();
-                let base_amount = if card.upgraded { 15 } else { 11 };
+                let base_amount =
+                    if card.upgraded { 15 } else { 11 } + card.enchantment.get_bonus_damage();
 
                 state.flat_map_simple(|state| {
                     state.apply_attack_damage(
@@ -2245,14 +2323,22 @@ impl CombatState {
                     )
                 })
             }
+            CardPrototype::Deflect => {
+                assert!(target.is_none());
+                let base_amount = if card.upgraded { 7 } else { 4 };
+
+                state.flat_map_simple(|slf| slf.add_block_from_card(base_amount))
+            }
             CardPrototype::Dash => {
                 let target = target.unwrap();
                 let base_amount = if card.upgraded { 13 } else { 10 };
 
+                let damage = base_amount + card.enchantment.get_bonus_damage();
+
                 let state = state.flat_map_simple(|state| {
                     state.apply_attack_damage(
                         CharacterIndex::Player,
-                        base_amount,
+                        damage,
                         CharacterIndex::Enemy(target),
                     )
                 });
@@ -2261,7 +2347,8 @@ impl CombatState {
             }
             CardPrototype::Neutralize => {
                 let target = target.unwrap();
-                let base_amount = if card.upgraded { 4 } else { 3 };
+                let base_amount =
+                    if card.upgraded { 4 } else { 3 } + card.enchantment.get_bonus_damage();
 
                 let state = state.flat_map_simple(|state| {
                     state.apply_status_to_enemy(
@@ -2281,28 +2368,52 @@ impl CombatState {
             }
             CardPrototype::SuckerPunch => {
                 let target = target.unwrap();
-                let base_amount = if card.upgraded { 10 } else { 8 };
+                let base_amount =
+                    if card.upgraded { 10 } else { 8 } + card.enchantment.get_bonus_damage();
 
                 // FIXME: If the enemy die, the index will shift....
                 let state = state.flat_map_simple(|state| {
-                    state.apply_attack_damage(
-                        CharacterIndex::Player,
-                        base_amount,
-                        CharacterIndex::Enemy(target),
-                    )
-                });
-
-                state.flat_map_simple(|state| {
                     state.apply_status_to_enemy(
                         target,
                         Status::Weak,
                         if card.upgraded { 2 } else { 1 },
                     )
+                });
+
+                state.flat_map_simple(|state| {
+                    state.apply_attack_damage(
+                        CharacterIndex::Player,
+                        base_amount,
+                        CharacterIndex::Enemy(target),
+                    )
+                })
+            }
+            CardPrototype::Assassinate => {
+                let target = target.unwrap();
+                let base_amount =
+                    if card.upgraded { 13 } else { 10 } + card.enchantment.get_bonus_damage();
+
+                // FIXME: If the enemy die, the index will shift....
+                let state = state.flat_map_simple(|state| {
+                    state.apply_status_to_enemy(
+                        target,
+                        Status::Vulnerable,
+                        if card.upgraded { 2 } else { 1 },
+                    )
+                });
+
+                state.flat_map_simple(|state| {
+                    state.apply_attack_damage(
+                        CharacterIndex::Player,
+                        base_amount,
+                        CharacterIndex::Enemy(target),
+                    )
                 })
             }
             CardPrototype::Squash => {
                 let target = target.unwrap();
-                let base_amount = if card.upgraded { 12 } else { 10 };
+                let base_amount =
+                    if card.upgraded { 12 } else { 10 } + card.enchantment.get_bonus_damage();
 
                 // FIXME: If the enemy die, the index will shift....
                 let state = state.flat_map_simple(|state| {
@@ -2398,7 +2509,8 @@ impl CombatState {
             }
             CardPrototype::PoisonedStab => {
                 let target = target.unwrap();
-                let base_amount = if card.upgraded { 8 } else { 6 };
+                let base_amount =
+                    if card.upgraded { 8 } else { 6 } + card.enchantment.get_bonus_damage();
 
                 // FIXME: If the enemy die, the index will shift....
                 let state = state.flat_map_simple(|state| {
@@ -2430,6 +2542,16 @@ impl CombatState {
                 }
                 state.dedup();
                 state
+            }
+            CardPrototype::Equilibrium => {
+                assert!(target.is_none());
+                let base_amount = if card.upgraded { 16 } else { 13 };
+
+                let state = state.flat_map_simple(|slf| slf.add_block_from_card(base_amount));
+
+                state.flat_map_simple(|state| {
+                    state.apply_status_change(CharacterIndex::Player, Status::RetainHand, 1)
+                })
             }
             CardPrototype::DeadlyPoison => {
                 let target = target.unwrap();
@@ -2506,7 +2628,8 @@ impl CombatState {
             CardPrototype::PreciseCut => {
                 let target = target.unwrap();
 
-                let base_amount: usize = if card.upgraded { 16 } else { 13 };
+                let base_amount: usize = if card.upgraded { 16 } else { 13 }
+                    + usize::from(card.enchantment.get_bonus_damage());
 
                 state.flat_map_simple(|state| {
                     let num_hand_cards = state.player.hand.num_cards();
@@ -2587,7 +2710,8 @@ impl CombatState {
                 state.flat_map_simple(|state| {
                     let base_amount = if card.upgraded { 6 } else { 4 }
                         + u16::try_from(state.player.creature.statuses[Status::Accuracy])
-                            .expect("Accuracy should always be positive");
+                            .expect("Accuracy should always be positive")
+                        + card.enchantment.get_bonus_damage();
                     state.apply_attack_damage(
                         CharacterIndex::Player,
                         base_amount,
@@ -2629,7 +2753,8 @@ impl CombatState {
             }
             CardPrototype::LeadingStrike => {
                 let target = target.unwrap();
-                let base_amount = if card.upgraded { 10 } else { 7 };
+                let base_amount =
+                    if card.upgraded { 10 } else { 7 } + card.enchantment.get_bonus_damage();
 
                 let state = state.flat_map_simple(|state| {
                     state.apply_attack_damage(
@@ -2722,11 +2847,13 @@ impl CombatState {
                 })
             }
             CardPrototype::DaggerSpray => {
+                let dmg = if card.upgraded { 6 } else { 4 } + card.enchantment.get_bonus_damage();
+
                 let state = state.flat_map_simple(|state| {
                     state.for_all_enemies(|state, index| {
                         state.apply_attack_damage(
                             CharacterIndex::Player,
-                            if card.upgraded { 6 } else { 4 },
+                            dmg,
                             CharacterIndex::Enemy(index),
                         )
                     })
@@ -2736,7 +2863,7 @@ impl CombatState {
                     state.for_all_enemies(|state, index| {
                         state.apply_attack_damage(
                             CharacterIndex::Player,
-                            if card.upgraded { 6 } else { 4 },
+                            dmg,
                             CharacterIndex::Enemy(index),
                         )
                     })
@@ -2746,7 +2873,7 @@ impl CombatState {
                 assert!(target.is_none());
 
                 let repeats = if card.upgraded { 5 } else { 4 };
-                let base_dmg = 3;
+                let base_dmg = 3 + card.enchantment.get_bonus_damage();
 
                 state.flat_map_simple(|state| {
                     let mut state = Distribution::single_value(state);
@@ -2778,7 +2905,7 @@ impl CombatState {
                 let target = target.unwrap();
 
                 let repeats = if card.upgraded { 4 } else { 3 };
-                let base_dmg = 2;
+                let base_dmg = 2 + card.enchantment.get_bonus_damage();
 
                 state.flat_map_simple(|state| {
                     state.repeat_single_enemy_cancel_if_dead(target, repeats, |state, enemy| {
@@ -2793,7 +2920,8 @@ impl CombatState {
             CardPrototype::Flachettes => {
                 let target = target.unwrap();
 
-                let base_dmg = if card.upgraded { 7 } else { 5 };
+                let base_dmg =
+                    if card.upgraded { 7 } else { 5 } + card.enchantment.get_bonus_damage();
 
                 state.flat_map_simple(|state| {
                     let repeats = state
@@ -2865,6 +2993,20 @@ impl CombatState {
                     Distribution::single_value(state)
                 }
             });
+        }
+
+        if let Some(CardEnchantment::Momentum {
+            amount,
+            this_combat_value,
+        }) = &mut card.enchantment
+        {
+            *this_combat_value += u16::from(*amount);
+        }
+
+        let card_draw_from_enchantment = card.enchantment.draw_after_play();
+
+        for _ in 0..card_draw_from_enchantment {
+            state = state.flat_map_simple(CombatState::draw_single_card);
         }
 
         if is_raw_play {
@@ -3034,7 +3176,7 @@ impl CombatState {
             f32::from(amount)
         };
 
-        let mut amount = if source_status[Status::Shrink] > 0 {
+        let mut amount = if source_status[Status::Shrink] != 0 {
             amount * 0.7
         } else {
             amount
@@ -3086,6 +3228,12 @@ impl CombatState {
                     }
                 }
                 self.player.creature.hp = self.player.creature.hp.saturating_sub(unblocked);
+                if self.player.creature.statuses[Status::CurlUp] > 0 {
+                    self.player.creature.block +=
+                        u16::try_from(self.player.creature.statuses[Status::CurlUp])
+                            .expect("Curl up must be positive");
+                    self.player.creature.statuses[Status::CurlUp] = 0;
+                }
             }
             CharacterIndex::Enemy(index) => {
                 let enemy_block = &mut self.enemies[index].creature.block;
@@ -3099,12 +3247,12 @@ impl CombatState {
 
                     if self.enemies[index].creature.statuses[Status::VitalSpark] > 0
                         && source == CharacterIndex::Player
-                        && !self.enemies[index].has_taken_unblocked_damage_this_turn
+                        && !self.enemies[index].has_taken_unblocked_attack_damage_this_turn
                     {
                         self.player.energy += 1;
                     }
 
-                    self.enemies[index].has_taken_unblocked_damage_this_turn = true;
+                    self.enemies[index].has_taken_unblocked_attack_damage_this_turn = true;
                 }
 
                 if unblocked == 0 && imbalanced {
@@ -3117,6 +3265,12 @@ impl CombatState {
                 }
                 self.enemies[index].creature.hp =
                     self.enemies[index].creature.hp.saturating_sub(unblocked);
+                if self.enemies[index].creature.statuses[Status::CurlUp] > 0 {
+                    self.enemies[index].creature.block +=
+                        u16::try_from(self.enemies[index].creature.statuses[Status::CurlUp])
+                            .expect("Curl up must be positive");
+                    self.enemies[index].creature.statuses[Status::CurlUp] = 0;
+                }
             }
         }
 
@@ -3153,6 +3307,68 @@ impl CombatState {
         state
     }
 
+    fn apply_unsourced_damage<
+        Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
+    >(
+        mut self,
+        amount: u16,
+        target: CharacterIndex,
+    ) -> Distribution {
+        let target_status = match target {
+            CharacterIndex::Player => &mut self.player.creature.statuses,
+            CharacterIndex::Enemy(index) => &mut self.enemies[index].creature.statuses,
+        };
+
+        // TODO: Triggers
+        match target {
+            CharacterIndex::Player => {
+                let mut unblocked = amount.saturating_sub(self.player.creature.block);
+                self.player.creature.block = self.player.creature.block.saturating_sub(amount);
+                if unblocked > 0 && target_status[Status::Slippery] > 0 {
+                    unblocked = 1;
+                    target_status[Status::Slippery] -= 1;
+                }
+
+                self.player.creature.hp = self.player.creature.hp.saturating_sub(unblocked);
+                // TODO: Does this (stuff like stone calendar trigger CurlUp???)
+                if self.player.creature.statuses[Status::CurlUp] > 0 {
+                    self.player.creature.block +=
+                        u16::try_from(self.player.creature.statuses[Status::CurlUp])
+                            .expect("Curl up must be positive");
+                    self.player.creature.statuses[Status::CurlUp] = 0;
+                }
+            }
+            CharacterIndex::Enemy(index) => {
+                let enemy_block = &mut self.enemies[index].creature.block;
+                let mut unblocked = amount.saturating_sub(*enemy_block);
+                *enemy_block = enemy_block.saturating_sub(amount);
+                if unblocked > 0 {
+                    if self.enemies[index].creature.statuses[Status::Slippery] > 0 {
+                        unblocked = 1;
+                        self.enemies[index].creature.statuses[Status::Slippery] -= 1;
+                    }
+                }
+
+                self.enemies[index].creature.hp =
+                    self.enemies[index].creature.hp.saturating_sub(unblocked);
+                // TODO: Does this (stuff like stone calendar trigger CurlUp???)
+                if self.enemies[index].creature.statuses[Status::CurlUp] > 0 {
+                    self.enemies[index].creature.block +=
+                        u16::try_from(self.enemies[index].creature.statuses[Status::CurlUp])
+                            .expect("Curl up must be positive");
+                    self.enemies[index].creature.statuses[Status::CurlUp] = 0;
+                }
+            }
+        }
+
+        let state = match target {
+            CharacterIndex::Player => Distribution::single_value(self),
+            CharacterIndex::Enemy(enemy_index) => self.on_enemy_lost_hp(enemy_index),
+        };
+
+        state
+    }
+
     fn on_enemy_lost_hp<
         Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
@@ -3176,7 +3392,7 @@ impl CombatState {
 
         for enemy in dead {
             if enemy.prototype == EnemyPrototype::ShrinkerBeetle {
-                decrease_non_neg(&mut self.player.creature.statuses[Status::Shrink]);
+                self.player.creature.statuses[Status::Shrink] = 0;
             }
         }
 
@@ -3243,7 +3459,7 @@ pub struct Player {
     pub hand: UnorderedCardSet,
     pub draw_pile: UnorderedCardSet,
     draw_pile_top_card: Option<Card>,
-    discard_pile: UnorderedCardSet,
+    pub discard_pile: UnorderedCardSet,
     exhaust_pile: UnorderedCardSet,
 
     // TODO: Unfortunately the real algorithm is muuch more complex
@@ -3331,7 +3547,7 @@ pub struct Enemy {
 
     pub has_acted_this_turn: bool,
 
-    pub has_taken_unblocked_damage_this_turn: bool,
+    pub has_taken_unblocked_attack_damage_this_turn: bool,
 
     pub state_machine: EnemyStateMachine,
 }
@@ -3416,9 +3632,13 @@ pub enum Status {
     Afterimage,
     #[serde(rename = "PIERCING_WAIL_POWER")]
     PiercingWail,
+    #[serde(rename = "RETAIN_HAND_POWER")]
+    RetainHand,
 
     #[serde(rename = "MINION_POWER")]
     Minion,
+    #[serde(rename = "CURL_UP_POWER")]
+    CurlUp,
 }
 
 impl Status {
@@ -3455,7 +3675,10 @@ impl Status {
             Status::Thorns => false,
             Status::Rampart => false,
             Status::Afterimage => false,
+            Status::PiercingWail => false,
             Status::Minion => false,
+            Status::CurlUp => false,
+            Status::RetainHand => false,
         }
     }
 }
@@ -3665,6 +3888,7 @@ pub enum EnemyPrototype {
     BowlbugNectar,
     BowlbugSilk,
     SlumberingBeetle,
+    LouseProgenitor,
     InfestedPrism,
     Entomancer,
     Chomper,
@@ -3874,7 +4098,7 @@ impl EnemyPrototype {
                 prefixed_move: EnemyMove {
                     actions: &[EnemyAction::ApplyStatusPlayer {
                         status: Status::Shrink,
-                        diff: 1,
+                        diff: -1,
                     }],
                 },
                 after: Box::new(EnemyMoveSet::ConstantRotation {
@@ -4211,6 +4435,37 @@ impl EnemyPrototype {
                         }],
                     }),
                 }),
+            },
+            Self::LouseProgenitor => EnemyMoveSet::ConstantRotation {
+                rotation: vec![
+                    EnemyMove {
+                        actions: &[
+                            EnemyAction::Attack {
+                                base_damage: 9,
+                                repeat: 1,
+                            },
+                            EnemyAction::ApplyStatusPlayer {
+                                status: Status::Frail,
+                                diff: 2,
+                            },
+                        ],
+                    },
+                    EnemyMove {
+                        actions: &[
+                            EnemyAction::Block { amount: 14 },
+                            EnemyAction::ApplyStatusSelf {
+                                status: Status::Strength,
+                                diff: 5,
+                            },
+                        ],
+                    },
+                    EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 14,
+                            repeat: 1,
+                        }],
+                    },
+                ],
             },
             Self::InfestedPrism => EnemyMoveSet::ConstantRotation {
                 rotation: vec![
@@ -4561,7 +4816,7 @@ pub(crate) mod test {
                         ..Default::default()
                     },
 
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                     has_acted_this_turn: false,
                 },
                 Enemy {
@@ -4577,7 +4832,7 @@ pub(crate) mod test {
                         ..Default::default()
                     },
 
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                     has_acted_this_turn: false,
                 },
             ],
@@ -4686,7 +4941,7 @@ pub(crate) mod test {
                             |status| if status == Status::Strength { 7 } else { 0 },
                         ),
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine {
                         current_state: 2,
@@ -4701,7 +4956,7 @@ pub(crate) mod test {
                         block: 0,
                         statuses: EnumMap::default(),
                     },
-                    has_taken_unblocked_damage_this_turn: false,
+                    has_taken_unblocked_attack_damage_this_turn: false,
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine {
                         current_state: 1,
@@ -4776,7 +5031,7 @@ pub(crate) mod test {
                     block: 0,
                     statuses: EnumMap::default(),
                 },
-                has_taken_unblocked_damage_this_turn: false,
+                has_taken_unblocked_attack_damage_this_turn: false,
                 has_acted_this_turn: false,
                 state_machine: EnemyStateMachine {
                     current_state: 1,
@@ -4828,7 +5083,7 @@ pub(crate) mod test {
                 },
 
                 has_acted_this_turn: false,
-                has_taken_unblocked_damage_this_turn: false,
+                has_taken_unblocked_attack_damage_this_turn: false,
             }],
             relic_state: iter::empty().collect(),
         }
