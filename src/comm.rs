@@ -8,7 +8,8 @@ use crate::{
     combat_action::CombatAction,
     distribution::{self, Distribution},
     game_state::{
-        self, CombatState, EncounterPrototype, Enemy, EnemyPrototype, RunInfo, Status,
+        self, CombatState, EncounterPrototype, Enemy, EnemyAction, EnemyPrototype, Player, RunInfo,
+        Status,
         cards::{Card, CardPrototype, UnorderedCardSet},
     },
 };
@@ -155,6 +156,10 @@ impl Comm {
 
             // TODO: Other piles (draw/discard/exhaust)
 
+            let player = comm.get_player_info();
+            options.retain(|state| player.satisfies(&state.player));
+            println!("Post statuses: {}", options.len());
+
             let remaining_options = is_single_choice(options)?;
             dbg!(remaining_options);
             todo!("Could not limit to single state")
@@ -210,6 +215,43 @@ struct PlayerCreatureInfo {
     powers: vec::Vec<(Status, i16)>,
 }
 
+impl PlayerCreatureInfo {
+    fn satisfies(&self, player: &Player) -> bool {
+        if self.current_hp != player.creature.hp {
+            return false;
+        }
+
+        if self.max_hp != player.creature.max_hp {
+            return false;
+        }
+
+        if self.block != player.creature.block {
+            return false;
+        }
+
+        let all_real_present = self
+            .powers
+            .iter()
+            .all(|(power, amount)| player.creature.statuses[*power] == *amount);
+
+        if !all_real_present {
+            return false;
+        }
+
+        let all_sim_present = player
+            .creature
+            .statuses
+            .iter()
+            .all(|(power, amount)| *amount == 0 || self.powers.contains(&(power, *amount)));
+
+        if !all_sim_present {
+            return false;
+        }
+
+        true
+    }
+}
+
 #[derive(Debug, PartialEq, serde::Deserialize)]
 #[serde(tag = "kind")]
 enum IntentInfo {
@@ -242,6 +284,24 @@ impl EnemyInfo {
         }
 
         // TODO: Statuses
+        let all_real_present = self
+            .powers
+            .iter()
+            .all(|(power, amount)| enemy.creature.statuses[*power] == *amount);
+
+        if !all_real_present {
+            return false;
+        }
+
+        let all_sim_present = enemy
+            .creature
+            .statuses
+            .iter()
+            .all(|(power, amount)| *amount == 0 || self.powers.contains(&(power, *amount)));
+
+        if !all_sim_present {
+            return false;
+        }
 
         // TODO: is_alone
         let intent = enemy.prototype.get_moveset().eval(
@@ -280,6 +340,48 @@ impl EnemyInfo {
             return false;
         }
 
+        if !self.intent.iter().all(|intent_info| match intent_info {
+            IntentInfo::Attack { repeat, .. } => intent.actions.iter().any(|action| {
+                matches!(
+                    action,
+                    EnemyAction::Attack {
+                        base_damage: _,
+                        repeat: comm_repeat,
+                    } if repeat == comm_repeat
+                )
+            }),
+            IntentInfo::Buff {} => intent
+                .actions
+                .iter()
+                .any(|action| matches!(action, EnemyAction::ApplyStatusSelf { .. })),
+            IntentInfo::Debuff {} => intent
+                .actions
+                .iter()
+                .any(|action| matches!(action, EnemyAction::ApplyStatusPlayer { .. })),
+            IntentInfo::DebuffStrong {} => intent
+                .actions
+                .iter()
+                .any(|action| matches!(action, EnemyAction::ApplyStatusPlayer { .. })),
+            IntentInfo::Defend {} => intent
+                .actions
+                .iter()
+                .any(|action| matches!(action, EnemyAction::Block { .. })),
+            IntentInfo::StatusCard { count } => intent
+                .actions
+                .iter()
+                .any(|action| matches!(action, EnemyAction::ShuffleCards { count: comm_count, .. } if count == comm_count)),
+            IntentInfo::Stun {} => {
+                // TODO:
+                true
+            },
+            IntentInfo::Sleep {} => {
+                // TODO:
+                true
+            },
+        }) {
+            return false;
+        }
+
         true
     }
 }
@@ -311,7 +413,7 @@ impl UnorderedCardSet {
             .filter_map(|(card, count)| (*count > 0).then_some((card.prototype, *count as usize)))
             .collect();
 
-        dbg!(&state_counts);
+        // dbg!(&state_counts);
 
         counts == state_counts
     }
@@ -370,6 +472,26 @@ impl RCONComm {
         };
 
         creature.block
+    }
+
+    fn get_player_info(&mut self) -> PlayerCreatureInfo {
+        let res = self
+            .client
+            .execute(RCONRequest::new("get_combat_player_state".to_owned()))
+            .expect("RCON Failed")
+            .body;
+
+        let jd = &mut serde_json::Deserializer::from_str(&res);
+
+        let result: Result<PlayerCreatureInfo, _> = serde_path_to_error::deserialize(jd);
+        let creature = match result {
+            Ok(v) => v,
+            Err(err) => {
+                panic!("{}, with source: {res}", err.path());
+            }
+        };
+
+        creature
     }
 
     fn enemies(&mut self) -> vec::Vec<EnemyInfo> {

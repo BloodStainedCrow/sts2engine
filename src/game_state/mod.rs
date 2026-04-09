@@ -86,6 +86,7 @@ pub enum EncounterPrototype {
     MechaKnight,
     SoulNexus,
     TheLostAndForgotten,
+    JaxfruitAndFlyconid,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,6 +110,7 @@ impl EncounterPrototype {
             EncounterPrototype::SingleCubexConstruct => Act1,
             EncounterPrototype::BeetleAndFuzzy => Act1,
             EncounterPrototype::RubyRaiders => Act1,
+            EncounterPrototype::JaxfruitAndFlyconid => Act1,
             EncounterPrototype::Vantom => Act1,
             EncounterPrototype::TheKin => Act1,
             EncounterPrototype::BowlbugsWeak => Act2,
@@ -140,6 +142,7 @@ impl EncounterPrototype {
             EncounterPrototype::SingleCubexConstruct => false,
             EncounterPrototype::BeetleAndFuzzy => false,
             EncounterPrototype::RubyRaiders => false,
+            EncounterPrototype::JaxfruitAndFlyconid => false,
             EncounterPrototype::Vantom => false,
             EncounterPrototype::TheKin => false,
             EncounterPrototype::BowlbugsWeak => false,
@@ -197,6 +200,7 @@ impl CombatState {
                     block: 0,
                     statuses: EnumMap::default(),
                 },
+                skip_next_duration_tick: EnumMap::default(),
             },
             enemies: vec![],
 
@@ -529,6 +533,53 @@ impl CombatState {
 
                         state
                     }))
+                });
+
+                state
+            }
+            EncounterPrototype::JaxfruitAndFlyconid => {
+                let hp = (31..=33)
+                    .cartesian_product(47..=49)
+                    // FIXME: Technically this is not a 50/50 chance
+                    .cartesian_product(1..=2);
+
+                let state = state.flat_map_simple(|state| {
+                    Distribution::equal_chance(hp.clone().map(
+                        |((jax_hp, flyconid_hp), current_state)| {
+                            let mut state = state.clone();
+
+                            state.enemies.push(Enemy {
+                                prototype: EnemyPrototype::SnappingJaxfruit,
+                                creature: Creature {
+                                    hp: jax_hp,
+                                    max_hp: jax_hp,
+                                    block: 0,
+                                    statuses: EnumMap::default(),
+                                },
+                                has_acted_this_turn: false,
+                                state_machine: EnemyStateMachine::default(),
+                                has_taken_unblocked_damage_this_turn: false,
+                            });
+
+                            state.enemies.push(Enemy {
+                                prototype: EnemyPrototype::Flyconid,
+                                creature: Creature {
+                                    hp: flyconid_hp,
+                                    max_hp: flyconid_hp,
+                                    block: 0,
+                                    statuses: EnumMap::default(),
+                                },
+                                has_acted_this_turn: false,
+                                state_machine: EnemyStateMachine {
+                                    current_state,
+                                    stunned: 0,
+                                },
+                                has_taken_unblocked_damage_this_turn: false,
+                            });
+
+                            state
+                        },
+                    ))
                 });
 
                 state
@@ -1697,6 +1748,11 @@ impl CombatState {
 
         let mut status_diff: EnumMap<Status, i16> = EnumMap::default();
         for (status, count) in &mut self.player.creature.statuses {
+            // if self.player.skip_next_duration_tick[status] {
+            //     self.player.skip_next_duration_tick[status] = false;
+            //     continue;
+            // }
+
             match status {
                 Status::Vulnerable => decrease_non_neg(count),
                 Status::Weak => decrease_non_neg(count),
@@ -2172,20 +2228,19 @@ impl CombatState {
                 let target = target.unwrap();
                 let base_amount = if card.upgraded { 4 } else { 3 };
 
-                // FIXME: If the enemy die, the index will shift....
                 let state = state.flat_map_simple(|state| {
-                    state.apply_attack_damage(
-                        CharacterIndex::Player,
-                        base_amount,
-                        CharacterIndex::Enemy(target),
-                    )
-                });
-
-                state.flat_map_simple(|state| {
                     state.apply_status_to_enemy(
                         target,
                         Status::Weak,
                         if card.upgraded { 2 } else { 1 },
+                    )
+                });
+
+                state.flat_map_simple(|state| {
+                    state.apply_attack_damage(
+                        CharacterIndex::Player,
+                        base_amount,
+                        CharacterIndex::Enemy(target),
                     )
                 })
             }
@@ -2268,36 +2323,40 @@ impl CombatState {
                 assert!(target.is_none());
                 let cards = if card.upgraded { 4 } else { 3 };
 
-                state.flat_map_simple(|mut slf| {
-                    let mut state = if slf.player.hand.num_cards() > 0 {
-                        if slf.player.hand.num_cards() > 1 {
-                            slf.player.waiting_for_decision =
-                                Some(RequiredPlayerDecision::ChooseCardInHand {
-                                    filter: |_| true,
-                                    action: |state, card| {
-                                        state.flat_map_simple(|mut state| {
-                                            state.player.waiting_for_decision = None;
-                                            state.discard_card(card)
-                                        })
-                                    },
-                                });
-                            Distribution::single_value(slf)
-                        } else {
-                            let card = *slf
-                                .player
-                                .hand
-                                .iter()
-                                .next()
-                                .expect("Hand contains a single card");
-                            slf.discard_card(card)
-                        }
-                    } else {
-                        Distribution::single_value(slf)
-                    };
+                state.flat_map_simple(|slf| {
+                    let mut state = Distribution::single_value(slf);
 
                     for _ in 0..cards {
                         state = state.flat_map_simple(CombatState::draw_single_card);
                     }
+
+                    state = state.flat_map_simple(|mut slf| {
+                        if slf.player.hand.num_cards() > 0 {
+                            if slf.player.hand.num_cards() > 1 {
+                                slf.player.waiting_for_decision =
+                                    Some(RequiredPlayerDecision::ChooseCardInHand {
+                                        filter: |_| true,
+                                        action: |state, card| {
+                                            state.flat_map_simple(|mut state| {
+                                                state.player.waiting_for_decision = None;
+                                                state.discard_card(card)
+                                            })
+                                        },
+                                    });
+                                Distribution::single_value(slf)
+                            } else {
+                                let card = *slf
+                                    .player
+                                    .hand
+                                    .iter()
+                                    .next()
+                                    .expect("Hand contains a single card");
+                                slf.discard_card(card)
+                            }
+                        } else {
+                            Distribution::single_value(slf)
+                        }
+                    });
 
                     state
                 })
@@ -2308,18 +2367,18 @@ impl CombatState {
 
                 // FIXME: If the enemy die, the index will shift....
                 let state = state.flat_map_simple(|state| {
-                    state.apply_attack_damage(
-                        CharacterIndex::Player,
-                        base_amount,
-                        CharacterIndex::Enemy(target),
-                    )
-                });
-
-                state.flat_map_simple(|state| {
                     state.apply_status_to_enemy(
                         target,
                         Status::Poison,
                         if card.upgraded { 4 } else { 3 },
+                    )
+                });
+
+                state.flat_map_simple(|state| {
+                    state.apply_attack_damage(
+                        CharacterIndex::Player,
+                        base_amount,
+                        CharacterIndex::Enemy(target),
                     )
                 })
             }
@@ -2671,19 +2730,13 @@ impl CombatState {
                 let base_dmg = 2;
 
                 state.flat_map_simple(|state| {
-                    let mut state = Distribution::single_value(state);
-
-                    for _ in 0..repeats {
-                        state = state.flat_map_simple(|state| {
-                            state.apply_attack_damage(
-                                CharacterIndex::Player,
-                                base_dmg,
-                                CharacterIndex::Enemy(target),
-                            )
-                        });
-                    }
-
-                    state
+                    state.repeat_single_enemy_cancel_if_dead(target, repeats, |state, enemy| {
+                        state.apply_attack_damage(
+                            CharacterIndex::Player,
+                            base_dmg,
+                            CharacterIndex::Enemy(enemy),
+                        )
+                    })
                 })
             }
             CardPrototype::StormOfSteel => {
@@ -2761,6 +2814,32 @@ impl CombatState {
         state
     }
 
+    fn repeat_single_enemy_cancel_if_dead<
+        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
+    >(
+        self,
+        enemy_index: usize,
+        repeats: usize,
+        fun: impl Fn(Self, usize) -> Distribution,
+    ) -> Distribution {
+        let num_enemies = self.enemies.len();
+        let mut state = Distribution::single_value(self);
+
+        for _ in 0..repeats {
+            state = state.flat_map_simple(|state| {
+                if state.enemies.len() == num_enemies {
+                    // Only do it if nothing has died yet
+                    // TODO: This means this will stop if *anything* dies, which is wrong but close enough for now
+                    (fun)(state, enemy_index)
+                } else {
+                    Distribution::single_value(state)
+                }
+            });
+        }
+
+        state
+    }
+
     fn discard_card<
         Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
@@ -2827,12 +2906,15 @@ impl CombatState {
 
         let amount = base_amount.saturating_add_signed(status[Status::Dexterity]);
 
+        let amount = f32::from(amount);
+
         let amount = if status[Status::Frail] > 0 {
-            (amount as f32 * 0.75) as u16
+            amount * 0.75
         } else {
             amount
         };
-        amount
+
+        amount as u16
     }
 
     fn apply_attack_damage<
@@ -3048,6 +3130,10 @@ impl CombatState {
             return Distribution::single_value(self);
         }
 
+        if target == CharacterIndex::Player && status.is_debuff() && status_list[status] == 0 {
+            self.player.skip_next_duration_tick[status] = true;
+        }
+
         status_list[status] += diff;
 
         Distribution::single_value(self)
@@ -3081,6 +3167,8 @@ pub struct Player {
     stars: u8,
 
     pub creature: Creature,
+    // This is taken from the game directly. I hate it
+    skip_next_duration_tick: enum_map::EnumMap<Status, bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -3132,6 +3220,7 @@ impl Player {
                 block: 0,
                 statuses: EnumMap::default(),
             },
+            skip_next_duration_tick: EnumMap::default(),
         }
     }
 }
@@ -3498,6 +3587,8 @@ pub enum EnemyPrototype {
     TwigSlimeM,
     LeafSlimeS,
     TwigSlimeS,
+    SnappingJaxfruit,
+    Flyconid,
 }
 
 impl EnemyPrototype {
@@ -3585,6 +3676,57 @@ impl EnemyPrototype {
                             }],
                         },
                         2,
+                    ),
+                ],
+            },
+            Self::SnappingJaxfruit => EnemyMoveSet::ConstantRotation {
+                rotation: vec![EnemyMove {
+                    actions: &[
+                        EnemyAction::Attack {
+                            base_damage: 3,
+                            repeat: 1,
+                        },
+                        EnemyAction::ApplyStatusSelf {
+                            status: Status::Strength,
+                            diff: 2,
+                        },
+                    ],
+                }],
+            },
+            Self::Flyconid => EnemyMoveSet::RandomNoRepeat {
+                weighted_options: vec![
+                    (
+                        EnemyMove {
+                            actions: &[EnemyAction::ApplyStatusPlayer {
+                                status: Status::Vulnerable,
+                                diff: 2,
+                            }],
+                        },
+                        3,
+                    ),
+                    (
+                        EnemyMove {
+                            actions: &[
+                                EnemyAction::Attack {
+                                    base_damage: 8,
+                                    repeat: 1,
+                                },
+                                EnemyAction::ApplyStatusPlayer {
+                                    status: Status::Frail,
+                                    diff: 2,
+                                },
+                            ],
+                        },
+                        2,
+                    ),
+                    (
+                        EnemyMove {
+                            actions: &[EnemyAction::Attack {
+                                base_damage: 11,
+                                repeat: 1,
+                            }],
+                        },
+                        1,
                     ),
                 ],
             },

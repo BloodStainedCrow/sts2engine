@@ -8,6 +8,7 @@ use sts2mcts::mcts::MCTS;
 static GLOBAL: MiMalloc = MiMalloc;
 
 use std::{
+    io::{Read, stdin},
     thread,
     time::{Duration, Instant},
 };
@@ -126,44 +127,45 @@ fn main() {
 }
 
 fn run_mcts() {
-    // TODO: Assume specific fight
     let mut comm = Comm::new();
-
-    let pre_first_turn_state = game_state::CombatState::get_starting_states::<
-        distribution::full::Distribution<_>,
-    >(comm.guess_encounter(), &comm.get_run_state(), |hps| {
-        comm.filter_hp(hps)
-    });
-
-    let mut state = pre_first_turn_state;
-
     loop {
-        state.dedup();
-        let real_state_res = comm.find_valid_combat_states(state.into_values().collect());
+        let pre_first_turn_state = game_state::CombatState::get_starting_states::<
+            distribution::full::Distribution<_>,
+        >(comm.guess_encounter(), &comm.get_run_state(), |hps| {
+            comm.filter_hp(hps)
+        });
 
-        let real_state = real_state_res.unwrap();
+        let mut state = pre_first_turn_state;
 
-        if real_state.get_post_game_state().is_some() {
-            break;
+        loop {
+            state.dedup();
+            let real_state_res = comm.find_valid_combat_states(state.into_values().collect());
+
+            let real_state = real_state_res.unwrap();
+
+            if real_state.get_post_game_state().is_some() {
+                break;
+            }
+
+            // TODO: Do not discard the full game tree, since previous work is still valuable
+            let mut engine: MCTS<CombatState> = MCTS::new(real_state.clone());
+            let action = engine.par_search(Duration::from_secs(5));
+            dbg!(sts2mcts::mcts::NODES_CHECKED.load(std::sync::atomic::Ordering::Relaxed));
+            dbg!(action);
+
+            state = real_state.apply(action);
+            comm.apply_action(action);
+
+            // After applying the action on the game, we need to wait for stuff to settle (I do not know what the game returns while the animations are playing)
+            // TODO: Use the time on calcs insread of just waiting
+            // engine.par_search(Duration::from_secs(4));
+
+            thread::sleep(Duration::from_secs(1));
         }
 
-        // TODO: Do not discard the full game tree, since previous work is still valuable
-        let mut engine: MCTS<CombatState> = MCTS::new(real_state.clone());
-        let action = engine.par_search(Duration::from_secs(5));
-        dbg!(sts2mcts::mcts::NODES_CHECKED.load(std::sync::atomic::Ordering::Relaxed));
-        dbg!(action);
-
-        state = real_state.apply(action);
-        comm.apply_action(action);
-
-        // After applying the action on the game, we need to wait for stuff to settle (I do not know what the game returns while the animations are playing)
-        // TODO: Use the time on calcs insread of just waiting
-        // engine.par_search(Duration::from_secs(4));
-
-        thread::sleep(Duration::from_secs(1));
+        println!("No more action, is the fight over?");
+        let _ = stdin().read(&mut [0]).expect("Failed to read from stdin");
     }
-
-    println!("No more action, is the fight over?");
 }
 
 fn run_expectimax() {
