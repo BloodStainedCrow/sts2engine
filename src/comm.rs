@@ -104,7 +104,8 @@ impl Comm {
                 .into_iter()
                 .map(|card| Card {
                     prototype: card.kind,
-                    upgraded: false,
+                    upgraded: card.upgraded,
+                    // TODO:
                     enchantment: None,
                 })
                 .collect(),
@@ -387,9 +388,9 @@ impl EnemyInfo {
 }
 
 #[derive(Debug, serde::Deserialize)]
-#[serde(transparent)]
 struct CardInfo {
     kind: CardPrototype,
+    upgraded: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -405,12 +406,14 @@ struct CardState {
 
 impl UnorderedCardSet {
     fn satisfies(&self, cards: &[CardInfo]) -> bool {
-        let counts: std::collections::HashMap<CardPrototype, usize> =
-            cards.iter().map(|card| card.kind).counts();
-        let state_counts: std::collections::HashMap<CardPrototype, usize> = self
+        let counts: std::collections::HashMap<(CardPrototype, bool), usize> =
+            cards.iter().map(|card| (card.kind, card.upgraded)).counts();
+        let state_counts: std::collections::HashMap<(CardPrototype, bool), usize> = self
             .cards
             .iter()
-            .filter_map(|(card, count)| (*count > 0).then_some((card.prototype, *count as usize)))
+            .filter_map(|(card, count)| {
+                (*count > 0).then_some(((card.prototype, card.upgraded), *count as usize))
+            })
             .collect();
 
         // dbg!(&state_counts);
@@ -593,7 +596,7 @@ impl RCONComm {
 
                 let card_index = hand
                     .iter()
-                    .position(|info| info.kind == card.prototype)
+                    .position(|info| info.kind == card.prototype && info.upgraded == card.upgraded)
                     .unwrap_or_else(|| panic!("Could not find card {card:?} in game hand"));
 
                 format!("choose_card_from_hand {card_index}")
@@ -601,15 +604,11 @@ impl RCONComm {
             CombatAction::EndTurn => "end_turn".to_string(),
         };
 
-        dbg!("SEND");
-
         let res = self
             .client
             .execute(RCONRequest::new(command))
             .expect("RCON Failed")
             .body;
-
-        dbg!("RECV");
 
         assert_eq!("OK", res);
     }
