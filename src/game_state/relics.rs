@@ -40,6 +40,7 @@ pub enum RelicPrototype {
     ArtOfWar,
     StoneCracker,
     OrnamentalFan,
+    TeaOfDiscourtesy,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

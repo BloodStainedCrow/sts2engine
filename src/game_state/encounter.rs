@@ -1271,11 +1271,26 @@ impl CombatState {
                     .collect_vec(),
             )
         });
-        let state = state_with_enemy.fix_odds();
+        let mut state = state_with_enemy.fix_odds();
         assert!(!state.is_empty(), "Did you adjust the max_hp filter???");
 
         assert!(state.all_unique());
         dbg!(state.len());
+
+        if run_info
+            .relic_state
+            .contains(RelicPrototype::TeaOfDiscourtesy)
+        {
+            for _ in 0..2 {
+                state = state.map(|mut state| {
+                    state
+                        .player
+                        .draw_pile
+                        .add_card(crate::CardPrototype::Dazed.get_normal_card());
+                    state
+                });
+            }
+        }
 
         // TODO: This means we instantiate #NumPossibleStartingHands GameStates.
         // This will likely blow up our RAM. Find a way to solve that
