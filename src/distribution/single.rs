@@ -1,4 +1,7 @@
-use rand::{random_range, rng, seq::IteratorRandom};
+use rand::{
+    random_range, rng,
+    seq::{IndexedRandom, IteratorRandom},
+};
 use std::{
     cmp::Ordering,
     hash::Hash,
@@ -40,6 +43,8 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
     }
 
     fn from_duplicates(values: impl IntoIterator<Item = (Value, usize)>) -> Self {
+        // TODO: Avoid collecting here
+        // TODO: Maybe just dont allocate the values? Indices would be much smaller?
         let entries: Vec<(Value, _)> = values.into_iter().collect();
 
         let sum = entries.iter().map(|v| v.1).sum();

@@ -8,9 +8,9 @@ use crate::{
     combat_action::CombatAction,
     distribution::{self, Distribution},
     game_state::{
-        self, CombatState, EncounterPrototype, Enemy, EnemyAction, EnemyPrototype, Player, RunInfo,
-        Status,
+        self, CombatState, Enemy, EnemyAction, EnemyPrototype, Player, RunInfo, Status,
         cards::{Card, CardEnchantment, CardPrototype, UnorderedCardSet},
+        encounter::EncounterPrototype,
     },
 };
 
@@ -31,7 +31,7 @@ impl Comm {
     pub fn filter_hp(&mut self, hp: &[u16]) -> bool {
         let real = self.rcon.enemies();
 
-        real.len() == hp.len() && real.iter().zip(hp).all(|(real, hp)| real.current_hp == *hp)
+        real.len() == hp.len() && real.iter().zip(hp).all(|(real, hp)| real.max_hp == *hp)
     }
 
     fn get_combat_state(&self) -> Vec<CombatState> {
@@ -108,7 +108,18 @@ impl Comm {
                     enchantment: card.enchantment,
                 })
                 .collect(),
-            relic_state: [RingOfTheSnake].into_iter().collect(),
+            relic_state: [
+                RingOfTheSnake,
+                StoneCalendar,
+                BagOfMarbles,
+                PaelsBlood,
+                MrStruggles,
+                CentennialPuzzle,
+                BrilliantScarf,
+                Permafrost,
+            ]
+            .into_iter()
+            .collect(),
         }
     }
 
@@ -342,8 +353,9 @@ impl EnemyInfo {
             crate::game_state::EnemyAction::Block { .. } => {
                 self.intent.contains(&IntentInfo::Defend {})
             }
-            crate::game_state::EnemyAction::ApplyStatusSelf { .. } => {
-                self.intent.contains(&IntentInfo::Buff {})
+            crate::game_state::EnemyAction::ApplyStatusSelf { diff, .. } => {
+                // Some enemies remove buffs from themselves. This is not communicated via the intent system (i.e. Spiny Toad removing its own Thorns)
+                *diff <= 0 || self.intent.contains(&IntentInfo::Buff {})
             }
             crate::game_state::EnemyAction::ApplyStatusPlayer { .. } => {
                 self.intent.contains(&IntentInfo::Debuff {})

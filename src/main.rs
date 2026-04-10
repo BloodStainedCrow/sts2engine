@@ -178,7 +178,7 @@ fn run_expectimax() {
     // TODO: Assume specific fight
     let pre_first_turn_state =
         game_state::CombatState::get_starting_states::<distribution::full::Distribution<_>>(
-            game_state::EncounterPrototype::RubyRaiders,
+            game_state::encounter::EncounterPrototype::RubyRaiders,
             &RunInfo {
                 hp: 68,
                 max_hp: 70,

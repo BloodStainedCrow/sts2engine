@@ -33,6 +33,10 @@ pub enum RelicPrototype {
     BiiigHug,
     StoneCalendar,
     PaelsBlood,
+    MrStruggles,
+    CentennialPuzzle,
+    BrilliantScarf,
+    Permafrost,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

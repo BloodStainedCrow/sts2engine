@@ -90,6 +90,15 @@ impl UnorderedCardSet {
             .filter_map(|(k, v)| (*v > 0).then_some((k, *v)))
     }
 
+    pub fn extract_if(
+        &mut self,
+        filter: impl Fn(&Card) -> bool,
+    ) -> impl Iterator<Item = (Card, u8)> {
+        self.cards
+            .extract_if(.., move |(card, _count)| (filter)(card))
+            .filter_map(|(k, v)| (v > 0).then_some((k, v)))
+    }
+
     pub fn is_empty(&self) -> bool {
         self.iter().next().is_none()
     }
@@ -259,12 +268,15 @@ impl Card {
             (CardPrototype::Afterimage, _) => ENERGY[1],
             (CardPrototype::Backstab, _) => ENERGY[0],
             (CardPrototype::Peck, _) => ENERGY[1],
-            (CardPrototype::Flachettes, _) => ENERGY[1],
+            (CardPrototype::Flechettes, _) => ENERGY[1],
             (CardPrototype::SpoilsMap, _) => ENERGY[0],
             (CardPrototype::PiercingWail, _) => ENERGY[1],
             (CardPrototype::Equilibrium, _) => ENERGY[2],
             (CardPrototype::Deflect, _) => ENERGY[0],
             (CardPrototype::Assassinate, _) => ENERGY[0],
+            (CardPrototype::Adrenaline, _) => ENERGY[0],
+            (CardPrototype::Mayhem, false) => ENERGY[2],
+            (CardPrototype::Mayhem, true) => ENERGY[1],
         };
 
         if self.enchantment == Some(CardEnchantment::TezcatarasEmber) {
@@ -325,12 +337,14 @@ impl Card {
             CardPrototype::Afterimage => [LegalTarget::OwnPlayer],
             CardPrototype::Backstab => [LegalTarget::Enemy],
             CardPrototype::Peck => [LegalTarget::Enemy],
-            CardPrototype::Flachettes => [LegalTarget::Enemy],
+            CardPrototype::Flechettes => [LegalTarget::Enemy],
             CardPrototype::SpoilsMap => [LegalTarget::OwnPlayer],
             CardPrototype::PiercingWail => [LegalTarget::OwnPlayer],
             CardPrototype::Equilibrium => [LegalTarget::OwnPlayer],
             CardPrototype::Deflect => [LegalTarget::OwnPlayer],
             CardPrototype::Assassinate => [LegalTarget::Enemy],
+            CardPrototype::Adrenaline => [LegalTarget::OwnPlayer],
+            CardPrototype::Mayhem => [LegalTarget::OwnPlayer],
         }
         .into_iter()
     }
@@ -385,12 +399,14 @@ impl Card {
             CardPrototype::Afterimage => Rare,
             CardPrototype::Backstab => Uncommon,
             CardPrototype::Peck => Special,
-            CardPrototype::Flachettes => Uncommon,
+            CardPrototype::Flechettes => Uncommon,
             CardPrototype::SpoilsMap => Special,
             CardPrototype::PiercingWail => Common,
             CardPrototype::Equilibrium => Uncommon,
             CardPrototype::Deflect => Common,
             CardPrototype::Assassinate => Rare,
+            CardPrototype::Adrenaline => Rare,
+            CardPrototype::Mayhem => Rare,
         }
     }
 
@@ -427,6 +443,7 @@ impl Card {
             CardPrototype::Backstab => true,
             CardPrototype::PiercingWail => true,
             CardPrototype::Assassinate => true,
+            CardPrototype::Adrenaline => true,
             _ => false,
         }
     }
@@ -515,12 +532,14 @@ pub enum CardPrototype {
     Afterimage,
     Backstab,
     Peck,
-    Flachettes,
+    Flechettes,
     SpoilsMap,
     PiercingWail,
     Equilibrium,
     Deflect,
     Assassinate,
+    Adrenaline,
+    Mayhem,
 }
 
 impl CardPrototype {
@@ -582,12 +601,14 @@ impl CardPrototype {
             Self::Afterimage => Power,
             Self::Backstab => Attack,
             Self::Peck => Attack,
-            Self::Flachettes => Attack,
+            Self::Flechettes => Attack,
             Self::SpoilsMap => Quest,
             Self::PiercingWail => Skill,
             Self::Equilibrium => Skill,
             Self::Deflect => Skill,
             Self::Assassinate => Attack,
+            Self::Adrenaline => Skill,
+            Self::Mayhem => Power,
         }
     }
 }
