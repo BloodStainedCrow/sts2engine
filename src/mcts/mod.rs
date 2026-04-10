@@ -41,9 +41,23 @@ impl mcts::GameState for CombatState {
     }
 
     fn get_eval(&self) -> Option<Self::Eval> {
-        self.get_post_game_state().map(|state| Eval {
-            v: (f32::from(state.hp) - f32::from(state.turn_counter) * 0.3)
-                / f32::from(state.max_hp),
+        assert!(
+            self.player.creature.hp <= self.player.creature.max_hp,
+            "HP: {}, MAX HP: {}",
+            self.player.creature.hp,
+            self.player.creature.max_hp
+        );
+
+        self.get_post_game_state().map(|state| {
+            if state.hp == 0 {
+                // When we die, do not punish taking longer to die :)
+                return Eval { v: 0.0 };
+            }
+            Eval {
+                // Reward faster kills, but only if they do not result in up losing *any* hp
+                v: (f32::from(state.hp) - f32::from(state.turn_counter) * (1.0 / 256.0))
+                    / f32::from(state.max_hp),
+            }
         })
     }
 
