@@ -18,6 +18,8 @@ pub enum EncounterPrototype {
     SlimesWeak,
     ShrinkerBeetle,
     Byrdonis,
+    // Mr. Wriggles
+    PhrogParasite,
     BygoneEffigy,
     SingleCubexConstruct,
     BeetleAndFuzzy,
@@ -43,6 +45,7 @@ pub enum EncounterPrototype {
     OwlMagistrate,
     MechaKnight,
     SoulNexus,
+    Knights,
     TheLostAndForgotten,
     JaxfruitAndFlyconid,
 }
@@ -75,6 +78,7 @@ impl EncounterPrototype {
             EncounterPrototype::SlimesWeak => Act1,
             EncounterPrototype::ShrinkerBeetle => Act1,
             EncounterPrototype::Byrdonis => Act1,
+            EncounterPrototype::PhrogParasite => Act1,
             EncounterPrototype::BygoneEffigy => Act1,
             EncounterPrototype::SingleCubexConstruct => Act1,
             EncounterPrototype::BeetleAndFuzzy => Act1,
@@ -97,6 +101,7 @@ impl EncounterPrototype {
             EncounterPrototype::OwlMagistrate => Act3,
             EncounterPrototype::SlimedBerserker => Act3,
             EncounterPrototype::MechaKnight => Act3,
+            EncounterPrototype::Knights => Act3,
             EncounterPrototype::SoulNexus => Act3,
             EncounterPrototype::TheLostAndForgotten => Act3,
         }
@@ -111,6 +116,7 @@ impl EncounterPrototype {
             EncounterPrototype::SlimesWeak => false,
             EncounterPrototype::ShrinkerBeetle => false,
             EncounterPrototype::Byrdonis => true,
+            EncounterPrototype::PhrogParasite => true,
             EncounterPrototype::BygoneEffigy => true,
             EncounterPrototype::SingleCubexConstruct => false,
             EncounterPrototype::BeetleAndFuzzy => false,
@@ -133,6 +139,7 @@ impl EncounterPrototype {
             EncounterPrototype::OwlMagistrate => false,
             EncounterPrototype::SlimedBerserker => false,
             EncounterPrototype::MechaKnight => true,
+            EncounterPrototype::Knights => true,
             EncounterPrototype::SoulNexus => true,
             EncounterPrototype::TheLostAndForgotten => false,
         }
@@ -150,6 +157,8 @@ impl CombatState {
     ) -> Distribution {
         let state = Distribution::single_value(Self {
             turn_counter: 0,
+            current_turn_side: super::CombatSide::Player,
+
             player: Player {
                 hand: vec![].into_iter().collect(),
                 draw_pile: run_info.deck.clone().into_iter().collect(),
@@ -397,6 +406,36 @@ impl CombatState {
 
                         state.enemies.push(Enemy {
                             prototype: EnemyPrototype::Byrdonis,
+                            creature: Creature {
+                                hp,
+                                max_hp: hp,
+                                block: 0,
+                                statuses: status,
+                            },
+                            has_acted_this_turn: false,
+                            state_machine: EnemyStateMachine::default(),
+                            has_taken_unblocked_attack_damage_this_turn: false,
+                        });
+
+                        state
+                    }))
+                });
+
+                state
+            }
+            EncounterPrototype::PhrogParasite => {
+                let hp = 61..=64;
+
+                let state = state.flat_map_simple(|state| {
+                    Distribution::equal_chance(hp.clone().map(|hp| {
+                        let mut state = state.clone();
+
+                        let mut status = EnumMap::default();
+
+                        status[Status::Infested] = 4;
+
+                        state.enemies.push(Enemy {
+                            prototype: EnemyPrototype::PhrogParasite,
                             creature: Creature {
                                 hp,
                                 max_hp: hp,
@@ -1115,6 +1154,48 @@ impl CombatState {
                         max_hp: 300,
                         block: 0,
                         statuses: status,
+                    },
+                    has_acted_this_turn: false,
+                    state_machine: EnemyStateMachine::default(),
+                    has_taken_unblocked_attack_damage_this_turn: false,
+                });
+
+                state
+            }),
+            EncounterPrototype::Knights => state.map(|mut state| {
+                state.enemies.push(Enemy {
+                    prototype: EnemyPrototype::FlailKnight,
+                    creature: Creature {
+                        hp: 101,
+                        max_hp: 101,
+                        block: 0,
+                        statuses: EnumMap::default(),
+                    },
+                    has_acted_this_turn: false,
+                    state_machine: EnemyStateMachine::default(),
+                    has_taken_unblocked_attack_damage_this_turn: false,
+                });
+
+                state.enemies.push(Enemy {
+                    prototype: EnemyPrototype::SpectralKnight,
+                    creature: Creature {
+                        hp: 93,
+                        max_hp: 93,
+                        block: 0,
+                        statuses: EnumMap::default(),
+                    },
+                    has_acted_this_turn: false,
+                    state_machine: EnemyStateMachine::default(),
+                    has_taken_unblocked_attack_damage_this_turn: false,
+                });
+
+                state.enemies.push(Enemy {
+                    prototype: EnemyPrototype::MagiKnight,
+                    creature: Creature {
+                        hp: 82,
+                        max_hp: 82,
+                        block: 0,
+                        statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),

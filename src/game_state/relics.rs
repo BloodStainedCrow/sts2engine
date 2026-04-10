@@ -37,6 +37,9 @@ pub enum RelicPrototype {
     CentennialPuzzle,
     BrilliantScarf,
     Permafrost,
+    ArtOfWar,
+    StoneCracker,
+    OrnamentalFan,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -158,7 +158,7 @@ fn run_mcts() {
             dbg!(action);
 
             comm.apply_action(action);
-            let animations_done = Instant::now() + Duration::from_secs(10);
+            let animations_done = Instant::now() + Duration::from_secs(2);
             state = real_state.apply(action);
 
             // After applying the action on the game, we need to wait for stuff to settle (I do not know what the game returns while the animations are playing)

@@ -108,18 +108,7 @@ impl Comm {
                     enchantment: card.enchantment,
                 })
                 .collect(),
-            relic_state: [
-                RingOfTheSnake,
-                StoneCalendar,
-                BagOfMarbles,
-                PaelsBlood,
-                MrStruggles,
-                CentennialPuzzle,
-                BrilliantScarf,
-                Permafrost,
-            ]
-            .into_iter()
-            .collect(),
+            relic_state: [RingOfTheSnake].into_iter().collect(),
         }
     }
 
@@ -153,13 +142,32 @@ impl Comm {
             // let mut options = is_single_choice(options)?;
 
             let enemies = comm.enemies();
+            // FIXME: DEBUG
+            let old_options = options.clone();
             options.retain(|state| {
+                if state.enemies.len() != enemies.len() {
+                    return false;
+                }
+
                 state
                     .enemies
                     .iter()
                     .zip(enemies.iter())
                     .all(|(enemy, info)| info.satisfies(enemy))
             });
+            if options.is_empty() {
+                let intents = old_options
+                    .into_iter()
+                    .map(|state| {
+                        state
+                            .enemies
+                            .into_iter()
+                            .map(|enemy| (enemy.prototype, enemy.state_machine))
+                            .collect_vec()
+                    })
+                    .collect_vec();
+                // dbg!(&intents);
+            }
             println!("Post enemies: {}", options.len());
             // let mut options = is_single_choice(options)?;
 
@@ -337,6 +345,9 @@ impl EnemyInfo {
             false,
         );
 
+        // dbg!(&self.intent);
+        // dbg!((enemy.prototype, &enemy.state_machine, intent));
+
         if !intent.actions.iter().all(|v| match v {
             crate::game_state::EnemyAction::Attack {
                 base_damage: _,
@@ -365,6 +376,7 @@ impl EnemyInfo {
                 .intent
                 .contains(&IntentInfo::StatusCard { count: *count }),
         }) {
+            dbg!((enemy.prototype, intent));
             return false;
         }
 
@@ -399,14 +411,13 @@ impl EnemyInfo {
                 .iter()
                 .any(|action| matches!(action, EnemyAction::ShuffleCards { count: comm_count, .. } if count == comm_count)),
             IntentInfo::Stun {} => {
-                // TODO:
-                true
+                intent.actions.is_empty()
             },
             IntentInfo::Sleep {} => {
-                // TODO:
-                true
+                intent.actions.is_empty()
             },
         }) {
+            dbg!(intent);
             return false;
         }
 
