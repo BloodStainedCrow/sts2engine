@@ -23,6 +23,8 @@ impl<Value> MulAssign<f32> for Distribution<Value> {
 }
 
 impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
+    const IS_SIZE_SENSITIVE: bool = true;
+
     type Inner<V: 'static> = Distribution<V>;
 
     fn single_value(value: Value) -> Self {

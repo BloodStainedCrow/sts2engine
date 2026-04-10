@@ -9,6 +9,8 @@ use std::{
 pub trait Distribution<Value: 'static>:
     MulAssign<f32> + From<full::Distribution<Value>> + IntoIterator<Item = (Value, f32)>
 {
+    const IS_SIZE_SENSITIVE: bool;
+
     type Inner<V: 'static>: Distribution<V, Inner<Value> = Self>;
 
     #[must_use]

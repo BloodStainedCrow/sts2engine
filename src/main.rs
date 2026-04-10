@@ -157,14 +157,15 @@ fn run_mcts() {
             dbg!(sts2mcts::mcts::NODES_CHECKED.load(std::sync::atomic::Ordering::Relaxed));
             dbg!(action);
 
-            state = real_state.apply(action);
             comm.apply_action(action);
+            let animations_done = Instant::now() + Duration::from_secs(10);
+            state = real_state.apply(action);
 
             // After applying the action on the game, we need to wait for stuff to settle (I do not know what the game returns while the animations are playing)
             // TODO: Use the time on calcs instead of just waiting
             // engine.par_search(Duration::from_secs(4));
 
-            thread::sleep(Duration::from_secs(2));
+            thread::sleep(animations_done - Instant::now());
         }
 
         println!("No more action, is the fight over?");

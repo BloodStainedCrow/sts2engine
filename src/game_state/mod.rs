@@ -145,78 +145,84 @@ impl CombatState {
         }
 
         // TODO: Potions
-        Either::Left(self.player
-            .hand
-            .iter()
-            .enumerate()
-            .filter(|(_, card)| !card.has_unplayable())
-            .filter(|(_, card)| {
-                if Some(4) == self.relic_state.get_state(RelicPrototype::BrilliantScarf) {
-                    return true;
-                }
-
-                let cost = card.get_cost();
-                match (cost.energy, cost.stars) {
-                    (CostVal::X, CostVal::X) => todo!(),
-                    (CostVal::X, CostVal::Val(cost)) => self.player.stars >= cost,
-                    (CostVal::Val(cost), CostVal::X) => self.player.energy >= cost,
-                    (CostVal::Val(energy), CostVal::Val(stars)) => {
-                        self.player.energy >= energy && self.player.stars >= stars
+        Either::Left(
+            self.player
+                .hand
+                .iter()
+                .enumerate()
+                .filter(|(_, card)| !card.has_unplayable())
+                .filter(|(_, card)| {
+                    if Some(4) == self.relic_state.get_state(RelicPrototype::BrilliantScarf) {
+                        return true;
                     }
-                }
-            })
-            .flat_map(move |(card_index, card)| {
-                card.get_legal_targets()
-                    .flat_map(move |target| match target {
-                        LegalTarget::OwnPlayer => Either::Left(std::iter::once(CombatAction::PlayCard {
-                            card: *card,
-                            target: None,
-                        })),
-                        LegalTarget::OtherPlayer => todo!(),
-                        LegalTarget::Enemy => Either::Right(self
-                            .enemies
-                            .iter()
-                            .enumerate()
-                            .map(|(enemy_index, _enemy)| CombatAction::PlayCard {
-                                card: *card,
-                                target: Some(enemy_index as u8),
-                            })),
-                    })
-            })
-            .chain(std::iter::repeat_n(
-                CombatAction::EndTurn,
-                // TODO: This is technically not correct. But it should drastically increase the speed of the engine
-                // Only allow ending turn when no cards can be played
-                usize::from(
-                    // Allow keeping cards if we retain at end of turn
-                    self.player.creature.statuses[Status::RetainHand] > 0
-                        // Allow not playing cards against Mr Beees
-                        || self.enemies.iter().any(|enemy| enemy.creature.statuses[Status::PersonalHive] > 0)
-                        // Allow not playing cards when an enemy has thorns
-                        || self.enemies.iter().any(|enemy| enemy.creature.statuses[Status::Thorns] > 0)
-                        || !self
-                            .player
-                            .hand
-                            .iter()
-                            .filter(|card| !card.has_unplayable())
-                            .filter(|card| !card.has_exhaust())
-                            .filter(|card| !card.has_ethereal())
-                            .any(|card| {
-                                let cost = card.get_cost();
-                                let can_afford = match (cost.energy, cost.stars) {
-                                    (CostVal::X, CostVal::X) => todo!(),
-                                    (CostVal::X, CostVal::Val(cost)) => self.player.stars >= cost,
-                                    (CostVal::Val(cost), CostVal::X) => self.player.energy >= cost,
-                                    (CostVal::Val(energy), CostVal::Val(stars)) => {
-                                        self.player.energy >= energy && self.player.stars >= stars
-                                    }
-                                };
 
-                                // TODO: Ignore exhausting cards here, to allow not playing those when not needed
-                                can_afford
-                            }),
-                ),
-            )))
+                    let cost = card.get_cost();
+                    match (cost.energy, cost.stars) {
+                        (CostVal::X, CostVal::X) => todo!(),
+                        (CostVal::X, CostVal::Val(cost)) => self.player.stars >= cost,
+                        (CostVal::Val(cost), CostVal::X) => self.player.energy >= cost,
+                        (CostVal::Val(energy), CostVal::Val(stars)) => {
+                            self.player.energy >= energy && self.player.stars >= stars
+                        }
+                    }
+                })
+                .flat_map(move |(card_index, card)| {
+                    card.get_legal_targets()
+                        .flat_map(move |target| match target {
+                            LegalTarget::OwnPlayer => {
+                                Either::Left(std::iter::once(CombatAction::PlayCard {
+                                    card: *card,
+                                    target: None,
+                                }))
+                            }
+                            LegalTarget::OtherPlayer => todo!(),
+                            LegalTarget::Enemy => {
+                                Either::Right(self.enemies.iter().enumerate().map(
+                                    |(enemy_index, _enemy)| CombatAction::PlayCard {
+                                        card: *card,
+                                        target: Some(enemy_index as u8),
+                                    },
+                                ))
+                            }
+                        })
+                })
+                // TODO(BSC): test whether limiting the end turn button improves the performance/playing strength of the engine
+                .chain(std::iter::once(CombatAction::EndTurn)),
+        )
+        // .chain(std::iter::repeat_n(
+        //     CombatAction::EndTurn,
+        //     // TODO: This is technically not correct. But it should drastically increase the speed of the engine
+        //     // Only allow ending turn when no cards can be played
+        //     usize::from(
+        //         // Allow keeping cards if we retain at end of turn
+        //         self.player.creature.statuses[Status::RetainHand] > 0
+        //             // Allow not playing cards against Mr Beees
+        //             || self.enemies.iter().any(|enemy| enemy.creature.statuses[Status::PersonalHive] > 0)
+        //             // Allow not playing cards when an enemy has thorns
+        //             || self.enemies.iter().any(|enemy| enemy.creature.statuses[Status::Thorns] > 0)
+        //             || !self
+        //                 .player
+        //                 .hand
+        //                 .iter()
+        //                 .filter(|card| !card.has_unplayable())
+        //                 .filter(|card| !card.has_exhaust())
+        //                 .filter(|card| !card.has_ethereal())
+        //                 .any(|card| {
+        //                     let cost = card.get_cost();
+        //                     let can_afford = match (cost.energy, cost.stars) {
+        //                         (CostVal::X, CostVal::X) => todo!(),
+        //                         (CostVal::X, CostVal::Val(cost)) => self.player.stars >= cost,
+        //                         (CostVal::Val(cost), CostVal::X) => self.player.energy >= cost,
+        //                         (CostVal::Val(energy), CostVal::Val(stars)) => {
+        //                             self.player.energy >= energy && self.player.stars >= stars
+        //                         }
+        //                     };
+
+        //                     // TODO: Ignore exhausting cards here, to allow not playing those when not needed
+        //                     can_afford
+        //                 }),
+        //     ),
+        // )))
     }
 
     pub(crate) fn apply<
@@ -440,7 +446,7 @@ impl CombatState {
         if self.player.hand.num_cards() > 5
             || self.player.draw_pile_top_card.is_some()
             || self.player.draw_pile.num_cards() + self.player.discard_pile.num_cards() < 5
-            || true
+            || !Distribution::IS_SIZE_SENSITIVE
         {
             // Just do the simple thing for now, to ensure we draw the top card
             let num_cards = 5;
@@ -450,10 +456,10 @@ impl CombatState {
             for _ in 0..num_cards {
                 assert!(!res.is_empty());
                 res = res.flat_map_simple(Self::draw_single_card);
+                res.dedup();
             }
 
             // This will produce lots of duplicated entries. Do reduce future work we dedup immediately
-            res.dedup();
             assert!(res.len() > 0);
 
             return res;
@@ -650,8 +656,6 @@ impl CombatState {
 
         self.relic_state
             .set_state_if_present(RelicPrototype::Shuriken, 0);
-        self.relic_state
-            .set_state_if_present(RelicPrototype::BrilliantScarf, 0);
 
         self.player.creature.block += u16::try_from(self.player.creature.statuses[Status::Plating])
             .expect("Plating cannot be negative");
@@ -665,7 +669,7 @@ impl CombatState {
                         let block_damage = min(self.player.creature.block, damage);
                         let unblocked = damage.saturating_sub(self.player.creature.block);
                         self.player.creature.block -= block_damage;
-                        self.player.creature.hp -= unblocked;
+                        self.player.creature.hp = self.player.creature.hp.saturating_sub(unblocked);
                     }
                 }
                 _ => {}
@@ -700,6 +704,9 @@ impl CombatState {
                     *count = 0;
                 }
                 Status::Burst => {
+                    *count = 0;
+                }
+                Status::Shadowmeld => {
                     *count = 0;
                 }
                 Status::Ritual => {
@@ -1028,20 +1035,22 @@ impl CombatState {
             }
         }
 
-        let mayham_amount = self.player.creature.statuses[Status::Mayham];
+        let mayhem_amount = self.player.creature.statuses[Status::Mayhem];
 
         let mut state = Distribution::single_value(self);
-        // Mayham Trigger
-        for _ in 0..mayham_amount {
+        // Mayhem Trigger
+        for _ in 0..mayhem_amount {
             state = state.flat_map_simple(|state| {
                 let card = state.remove_top_card_from_draw_pile::<Distribution>();
 
                 match card {
-                    Ok(card) => card.flat_map::<Self>(|(state, card)| {
+                    Ok(card) => card.flat_map::<Self>(|(mut state, card)| {
                         if card.has_unplayable() {
+                            state.player.discard_pile.add_card(card);
+
                             Distribution::single_value(state)
                         } else {
-                        state.play_card::<Distribution>(card, Target::Random, true)
+                            state.play_card::<Distribution>(card, Target::Random, true)
                         }
                     }),
                     Err(state) => Distribution::single_value(state),
@@ -1049,7 +1058,14 @@ impl CombatState {
             });
         }
 
-        let state = state.flat_map_simple(Self::draw_cards_for_turn);
+        let mut state = state.flat_map_simple(Self::draw_cards_for_turn);
+
+        state = state.map(|mut state| {
+            state
+                .relic_state
+                .set_state_if_present(RelicPrototype::BrilliantScarf, 0);
+            state
+        });
 
         let state = state.flat_map_simple(|state| {
             // NOTE(BSC): This assumes that it is not possible to have Snake and Drake at the same time!
@@ -1523,10 +1539,16 @@ impl CombatState {
                         )
                     })
                 }
+                CardPrototype::Shadowmeld => {
+                    assert!(target.is_none());
+                    state.flat_map_simple(|state| {
+                        state.apply_status_change(CharacterIndex::Player, Status::Shadowmeld, 1)
+                    })
+                }
                 CardPrototype::Mayhem => {
                     assert!(target.is_none());
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(CharacterIndex::Player, Status::Mayham, 1)
+                        state.apply_status_change(CharacterIndex::Player, Status::Mayhem, 1)
                     })
                 }
                 CardPrototype::Afterimage => {
@@ -1943,7 +1965,7 @@ impl CombatState {
                 && Some(0) == state.relic_state.get_state(RelicPrototype::Permafrost)
             {
                 state.relic_state.set_state(RelicPrototype::Permafrost, 1);
-                return state.add_block_to_creature(CharacterIndex::Player, 6);
+                return state.add_external_block_to_creature(CharacterIndex::Player, 6);
             }
 
             Distribution::single_value(state)
@@ -2096,6 +2118,25 @@ impl CombatState {
         Distribution::single_value(self)
     }
 
+    fn add_external_block_to_creature<
+        Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
+    >(
+        mut self,
+        creature: CharacterIndex,
+        base_amount: u16,
+    ) -> Distribution {
+        match creature {
+            CharacterIndex::Player => {
+                self.player.creature.block += base_amount;
+            }
+            CharacterIndex::Enemy(index) => self.enemies[index].creature.block += base_amount,
+        }
+
+        // TODO: Triggers
+
+        Distribution::single_value(self)
+    }
+
     fn calculate_block(&self, creature: CharacterIndex, base_amount: u16) -> u16 {
         let status = match creature {
             CharacterIndex::Player => &self.player.creature.statuses,
@@ -2106,11 +2147,16 @@ impl CombatState {
 
         let amount = f32::from(amount);
 
-        let amount = if status[Status::Frail] > 0 {
+        let mut amount = if status[Status::Frail] > 0 {
             amount * 0.75
         } else {
             amount
         };
+
+        if status[Status::Shadowmeld] > 0 {
+            // Each stack of Shadowmeld doubles block gain, so this is exponential.
+            amount *= (1 << status[Status::Shadowmeld]) as f32;
+        }
 
         amount as u16
     }
@@ -2653,7 +2699,9 @@ pub enum Status {
     Soar,
 
     #[serde(rename = "MAYHEM_POWER")]
-    Mayham,
+    Mayhem,
+    #[serde(rename = "SHADOWMELD_POWER")]
+    Shadowmeld,
 }
 
 impl Status {
@@ -2695,8 +2743,9 @@ impl Status {
             Status::CurlUp => false,
             Status::RetainHand => false,
             Status::Ritual => false,
-            Status::Mayham => false,
+            Status::Mayhem => false,
             Status::Soar => false,
+            Status::Shadowmeld => false,
         }
     }
 }

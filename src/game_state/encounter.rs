@@ -60,7 +60,6 @@ impl EncounterPrototype {
         match self {
             EncounterPrototype::SoloTunneler => false,
             EncounterPrototype::TheLostAndForgotten => false,
-            EncounterPrototype::MechaKnight => false,
             EncounterPrototype::SoulNexus => false,
 
             _ => true,
@@ -142,7 +141,7 @@ impl EncounterPrototype {
 
 impl CombatState {
     pub(crate) fn get_starting_states<
-        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
+        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution> + std::fmt::Debug,
     >(
         encounter: EncounterPrototype,
         run_info: &RunInfo,
@@ -1179,6 +1178,8 @@ impl CombatState {
                 state
             }),
         };
+
+        assert!(!state_with_enemy.is_empty());
 
         state_with_enemy.retain_no_chance_fix(|state| {
             (enemy_max_hp_filter)(

@@ -277,6 +277,8 @@ impl Card {
             (CardPrototype::Adrenaline, _) => ENERGY[0],
             (CardPrototype::Mayhem, false) => ENERGY[2],
             (CardPrototype::Mayhem, true) => ENERGY[1],
+            (CardPrototype::Shadowmeld, false) => ENERGY[1],
+            (CardPrototype::Shadowmeld, true) => ENERGY[0],
         };
 
         if self.enchantment == Some(CardEnchantment::TezcatarasEmber) {
@@ -345,6 +347,7 @@ impl Card {
             CardPrototype::Assassinate => [LegalTarget::Enemy],
             CardPrototype::Adrenaline => [LegalTarget::OwnPlayer],
             CardPrototype::Mayhem => [LegalTarget::OwnPlayer],
+            CardPrototype::Shadowmeld => [LegalTarget::OwnPlayer],
         }
         .into_iter()
     }
@@ -407,6 +410,7 @@ impl Card {
             CardPrototype::Assassinate => Rare,
             CardPrototype::Adrenaline => Rare,
             CardPrototype::Mayhem => Rare,
+            CardPrototype::Shadowmeld => Rare,
         }
     }
 
@@ -540,6 +544,7 @@ pub enum CardPrototype {
     Assassinate,
     Adrenaline,
     Mayhem,
+    Shadowmeld,
 }
 
 impl CardPrototype {
@@ -609,6 +614,7 @@ impl CardPrototype {
             Self::Assassinate => Attack,
             Self::Adrenaline => Skill,
             Self::Mayhem => Power,
+            Self::Shadowmeld => Skill,
         }
     }
 }

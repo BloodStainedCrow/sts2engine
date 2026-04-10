@@ -133,8 +133,15 @@ impl Comm {
         ) -> ControlFlow<Result<CombatState, NoValidOptionError>> {
             dbg!(options.first());
             // let mut options = is_single_choice(options)?;
+            println!("Start: {}", options.len());
 
-            println!("Pre player hp: {}", options.len());
+            let hand = comm.hand();
+            options.retain(|state| state.player.hand.satisfies(&hand));
+            if options.is_empty() {
+                dbg!(&hand);
+            }
+            println!("Post hand: {}", options.len());
+
             let player_hp = comm.get_hp();
             options.retain(|state| state.player.creature.hp == player_hp);
             println!("Post player hp: {}", options.len());
@@ -155,13 +162,6 @@ impl Comm {
             });
             println!("Post enemies: {}", options.len());
             // let mut options = is_single_choice(options)?;
-
-            let hand = comm.hand();
-            options.retain(|state| state.player.hand.satisfies(&hand));
-            if options.is_empty() {
-                dbg!(&hand);
-            }
-            println!("Post hand: {}", options.len());
 
             let draw_pile = comm.draw_pile();
             options.retain(|state| state.player.draw_pile.satisfies(&draw_pile));

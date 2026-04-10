@@ -27,6 +27,8 @@ impl<Value> Distribution<Distribution<Value>> {
 }
 
 impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
+    const IS_SIZE_SENSITIVE: bool = false;
+
     type Inner<V: 'static> = Distribution<V>;
 
     fn single_value(value: Value) -> Self {
