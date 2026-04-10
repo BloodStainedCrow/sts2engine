@@ -1038,7 +1038,11 @@ impl CombatState {
 
                 match card {
                     Ok(card) => card.flat_map::<Self>(|(state, card)| {
+                        if card.has_unplayable() {
+                            Distribution::single_value(state)
+                        } else {
                         state.play_card::<Distribution>(card, Target::Random, true)
+                        }
                     }),
                     Err(state) => Distribution::single_value(state),
                 }
