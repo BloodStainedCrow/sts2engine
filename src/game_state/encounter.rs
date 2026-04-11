@@ -179,7 +179,7 @@ impl CombatState {
                 },
                 skip_next_duration_tick: EnumMap::default(),
             },
-            enemies: vec![],
+            enemies: vec![].into(),
 
             relic_state: run_info.relic_state,
         });
@@ -194,7 +194,7 @@ impl CombatState {
                     Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::FuzzyWurmCrawler,
                             creature: Creature {
                                 hp,
@@ -220,7 +220,7 @@ impl CombatState {
                     Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::Nibbit,
                             creature: Creature {
                                 hp,
@@ -246,7 +246,7 @@ impl CombatState {
                     Distribution::equal_chance(hps.clone().map(|(first_hp, second_hp)| {
                         let mut state = state.clone();
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::Nibbit,
                             creature: Creature {
                                 hp: first_hp,
@@ -259,7 +259,7 @@ impl CombatState {
                             has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::Nibbit,
                             creature: Creature {
                                 hp: second_hp,
@@ -343,7 +343,7 @@ impl CombatState {
                                 }
 
                                 for (enemy, hp, starting_action) in enemies {
-                                    state.enemies.push(Enemy {
+                                    state.enemies.add_enemy(Enemy {
                                         prototype: enemy,
                                         creature: Creature {
                                             hp,
@@ -374,7 +374,7 @@ impl CombatState {
                     Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::ShrinkerBeetle,
                             creature: Creature {
                                 hp,
@@ -404,7 +404,7 @@ impl CombatState {
 
                         status[Status::Territorial] = 1;
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::Byrdonis,
                             creature: Creature {
                                 hp,
@@ -434,7 +434,7 @@ impl CombatState {
 
                         status[Status::Infested] = 4;
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::PhrogParasite,
                             creature: Creature {
                                 hp,
@@ -465,7 +465,7 @@ impl CombatState {
                         // TODO:
                         // status[Status::Slow] = 1;
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::BygoneEffigy,
                             creature: Creature {
                                 hp,
@@ -495,7 +495,7 @@ impl CombatState {
 
                         status[Status::Artifact] = 1;
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::CubexConstruct,
                             creature: Creature {
                                 hp,
@@ -521,7 +521,7 @@ impl CombatState {
                     Distribution::equal_chance(hp.clone().map(|(beetle_hp, fuzzy_hp)| {
                         let mut state = state.clone();
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::ShrinkerBeetle,
                             creature: Creature {
                                 hp: beetle_hp,
@@ -534,7 +534,7 @@ impl CombatState {
                             has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::FuzzyWurmCrawler,
                             creature: Creature {
                                 hp: fuzzy_hp,
@@ -564,7 +564,7 @@ impl CombatState {
                         |((jax_hp, flyconid_hp), current_state)| {
                             let mut state = state.clone();
 
-                            state.enemies.push(Enemy {
+                            state.enemies.add_enemy(Enemy {
                                 prototype: EnemyPrototype::SnappingJaxfruit,
                                 creature: Creature {
                                     hp: jax_hp,
@@ -577,7 +577,7 @@ impl CombatState {
                                 has_taken_unblocked_attack_damage_this_turn: false,
                             });
 
-                            state.enemies.push(Enemy {
+                            state.enemies.add_enemy(Enemy {
                                 prototype: EnemyPrototype::Flyconid,
                                 creature: Creature {
                                     hp: flyconid_hp,
@@ -635,7 +635,7 @@ impl CombatState {
                         let mut state = state.clone();
 
                         for (enemy, hp) in enemies {
-                            state.enemies.push(Enemy {
+                            state.enemies.add_enemy(Enemy {
                                 prototype: enemy,
                                 creature: Creature {
                                     hp,
@@ -660,7 +660,7 @@ impl CombatState {
 
                 status[Status::Slippery] = 9;
 
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::Vantom,
                     creature: Creature {
                         hp: 173,
@@ -681,7 +681,7 @@ impl CombatState {
                 Distribution::equal_chance(hp.map(|(first, second)| {
                     let mut state = state.clone();
 
-                    state.enemies.push(Enemy {
+                    state.enemies.add_enemy(Enemy {
                         prototype: EnemyPrototype::KinFollower,
                         creature: Creature {
                             hp: first,
@@ -694,7 +694,7 @@ impl CombatState {
                         has_taken_unblocked_attack_damage_this_turn: false,
                     });
 
-                    state.enemies.push(Enemy {
+                    state.enemies.add_enemy(Enemy {
                         prototype: EnemyPrototype::KinFollower,
                         creature: Creature {
                             hp: second,
@@ -710,7 +710,7 @@ impl CombatState {
                         has_taken_unblocked_attack_damage_this_turn: false,
                     });
 
-                    state.enemies.push(Enemy {
+                    state.enemies.add_enemy(Enemy {
                         prototype: EnemyPrototype::KinPriest,
                         creature: Creature {
                             hp: 190,
@@ -757,7 +757,7 @@ impl CombatState {
                         unbalanced[Status::Imbalanced] = 1;
 
                         for (enemy, hp) in enemies {
-                            state.enemies.push(Enemy {
+                            state.enemies.add_enemy(Enemy {
                                 prototype: enemy,
                                 creature: Creature {
                                     hp,
@@ -818,7 +818,7 @@ impl CombatState {
                         unbalanced[Status::Imbalanced] = 1;
 
                         for (enemy, hp) in enemies {
-                            state.enemies.push(Enemy {
+                            state.enemies.add_enemy(Enemy {
                                 prototype: enemy,
                                 creature: Creature {
                                     hp,
@@ -856,7 +856,7 @@ impl CombatState {
 
                         status[Status::CurlUp] = 14;
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::LouseProgenitor,
                             creature: Creature {
                                 hp,
@@ -880,7 +880,7 @@ impl CombatState {
 
                 status[Status::VitalSpark] = 1;
 
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::InfestedPrism,
                     creature: Creature {
                         hp: 200,
@@ -900,7 +900,7 @@ impl CombatState {
 
                 status[Status::PersonalHive] = 1;
 
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::Entomancer,
                     creature: Creature {
                         hp: 145,
@@ -926,7 +926,7 @@ impl CombatState {
 
                         status[Status::Artifact] = 2;
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::Chomper,
                             creature: Creature {
                                 hp: first,
@@ -942,7 +942,7 @@ impl CombatState {
                             has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::Chomper,
                             creature: Creature {
                                 hp: second,
@@ -989,7 +989,7 @@ impl CombatState {
                                 _ => unreachable!(),
                             };
 
-                            state.enemies.push(Enemy {
+                            state.enemies.add_enemy(Enemy {
                                 prototype: enemy,
                                 creature: Creature {
                                     hp,
@@ -1020,7 +1020,7 @@ impl CombatState {
                 state
             }
             EncounterPrototype::TheInsatiable => state.map(|mut state| {
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::TheInsatiable,
                     creature: Creature {
                         hp: 321,
@@ -1042,7 +1042,7 @@ impl CombatState {
                     Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
-                        state.enemies.push(Enemy {
+                        state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::SpinyToad,
                             creature: Creature {
                                 hp,
@@ -1065,7 +1065,7 @@ impl CombatState {
                 let mut rampart = EnumMap::default();
                 rampart[Status::Rampart] = 25;
 
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::LivingShield,
                     creature: Creature {
                         hp: 55,
@@ -1077,7 +1077,7 @@ impl CombatState {
                     state_machine: EnemyStateMachine::default(),
                     has_taken_unblocked_attack_damage_this_turn: false,
                 });
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::TurretOperator,
                     creature: Creature {
                         hp: 41,
@@ -1093,7 +1093,7 @@ impl CombatState {
                 state
             }),
             EncounterPrototype::DevotedSculptor => state.map(|mut state| {
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::DevotedSculptor,
                     creature: Creature {
                         hp: 162,
@@ -1109,7 +1109,7 @@ impl CombatState {
                 state
             }),
             EncounterPrototype::OwlMagistrate => state.map(|mut state| {
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::OwlMagistrate,
                     creature: Creature {
                         hp: 234,
@@ -1127,7 +1127,7 @@ impl CombatState {
             EncounterPrototype::SlimedBerserker => state.map(|mut state| {
                 let mut status = EnumMap::default();
 
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::SlimedBerserker,
                     creature: Creature {
                         hp: 266,
@@ -1147,7 +1147,7 @@ impl CombatState {
 
                 status[Status::Artifact] = 3;
 
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::MechaKnight,
                     creature: Creature {
                         hp: 300,
@@ -1163,7 +1163,7 @@ impl CombatState {
                 state
             }),
             EncounterPrototype::Knights => state.map(|mut state| {
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::FlailKnight,
                     creature: Creature {
                         hp: 101,
@@ -1176,7 +1176,7 @@ impl CombatState {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 });
 
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::SpectralKnight,
                     creature: Creature {
                         hp: 93,
@@ -1189,7 +1189,7 @@ impl CombatState {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 });
 
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::MagiKnight,
                     creature: Creature {
                         hp: 82,
@@ -1207,7 +1207,7 @@ impl CombatState {
             EncounterPrototype::SoulNexus => state.map(|mut state| {
                 let mut status = EnumMap::default();
 
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: todo!(),
                     creature: Creature {
                         hp: 234,
@@ -1231,7 +1231,7 @@ impl CombatState {
                 todo!();
                 // the_lost[Status::PossessSpeed] = 1;
 
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::TheLost,
                     creature: Creature {
                         hp: 93,
@@ -1243,7 +1243,7 @@ impl CombatState {
                     state_machine: EnemyStateMachine::default(),
                     has_taken_unblocked_attack_damage_this_turn: false,
                 });
-                state.enemies.push(Enemy {
+                state.enemies.add_enemy(Enemy {
                     prototype: EnemyPrototype::TheForgotten,
                     creature: Creature {
                         hp: 106,
@@ -1357,24 +1357,16 @@ impl CombatState {
         }
 
         if run_info.relic_state.contains(RelicPrototype::Anchor) {
-            state = state
-                .flat_map_simple(|state| state.add_block_to_creature(CharacterIndex::Player, 10));
+            state = state.flat_map_simple(|state| {
+                state.creature_add_block_to_itself(CharacterIndex::Player, 10)
+            });
         }
 
         if run_info.relic_state.contains(RelicPrototype::BagOfMarbles) {
             state = state.flat_map_simple(|state| {
-                let enemies = state.enemies.len();
-                let mut state = Distribution::single_value(state);
-                for enemy in 0..enemies {
-                    state = state.flat_map_simple(|state| {
-                        state.apply_status_change(
-                            CharacterIndex::Enemy(enemy),
-                            Status::Vulnerable,
-                            1,
-                        )
-                    });
-                }
-                state
+                state.for_all_enemies(|state, enemy| {
+                    state.apply_status_change(CharacterIndex::Enemy(enemy), Status::Vulnerable, 1)
+                })
             });
         }
 

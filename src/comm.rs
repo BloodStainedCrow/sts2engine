@@ -108,7 +108,9 @@ impl Comm {
                     enchantment: card.enchantment,
                 })
                 .collect(),
-            relic_state: [RingOfTheSnake].into_iter().collect(),
+            relic_state: [RingOfTheSnake, BronzeScales, CentennialPuzzle, BiiigHug]
+                .into_iter()
+                .collect(),
         }
     }
 
@@ -145,7 +147,7 @@ impl Comm {
             // FIXME: DEBUG
             let old_options = options.clone();
             options.retain(|state| {
-                if state.enemies.len() != enemies.len() {
+                if state.enemies.iter().count() != enemies.len() {
                     return false;
                 }
 
@@ -161,7 +163,8 @@ impl Comm {
                     .map(|state| {
                         state
                             .enemies
-                            .into_iter()
+                            .iter()
+                            .cloned()
                             .map(|enemy| (enemy.prototype, enemy.state_machine))
                             .collect_vec()
                     })

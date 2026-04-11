@@ -7,7 +7,7 @@ use std::{
     ops::{Mul, MulAssign},
 };
 pub trait Distribution<Value: 'static>:
-    MulAssign<f32> + From<full::Distribution<Value>> + IntoIterator<Item = (Value, f32)>
+    MulAssign<f32> + From<full::Distribution<Value>> + IntoIterator<Item = (Value, f32)> + 'static
 {
     const IS_SIZE_SENSITIVE: bool;
 

@@ -1,4 +1,5 @@
 use std::cmp::{max, min};
+use std::f32::DIGITS;
 use std::iter;
 
 use enum_map::{Enum, EnumMap};
@@ -31,9 +32,81 @@ pub struct CombatState {
 
     pub player: Player,
 
-    pub enemies: Vec<Enemy>,
+    pub enemies: EnemyList,
 
     pub relic_state: FullRelicState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EnemyIndex(usize);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct EnemyList {
+    enemies: Vec<Option<Enemy>>,
+}
+
+impl EnemyList {
+    pub fn add_enemy(&mut self, enemy: Enemy) {
+        self.enemies.push(Some(enemy));
+    }
+
+    pub fn extract_dead(&mut self) -> impl Iterator<Item = Enemy> {
+        self.enemies.iter_mut().flat_map(|slot| {
+            if let Some(enemy) = slot
+                && enemy.creature.hp == 0
+            {
+                slot.take()
+            } else {
+                None
+            }
+        })
+    }
+
+    fn all_alive_enemy_indices(&self) -> impl Iterator<Item = EnemyIndex> {
+        self.enemies
+            .iter()
+            .enumerate()
+            .filter_map(|(index, slot)| (slot.is_some()).then_some(EnemyIndex(index)))
+    }
+
+    pub fn get(&self, index: EnemyIndex) -> Option<&Enemy> {
+        self.enemies.get(index.0).map(Option::as_ref).flatten()
+    }
+
+    pub fn get_mut(&mut self, index: EnemyIndex) -> Option<&mut Enemy> {
+        self.enemies.get_mut(index.0).map(Option::as_mut).flatten()
+    }
+
+    pub fn get_teammate_index(&self, main: EnemyIndex) -> Option<EnemyIndex> {
+        self.enemies
+            .iter()
+            .enumerate()
+            .filter(|(enemy_index, enemy)| *enemy_index != main.0 && enemy.is_some())
+            .map(|(enemy_index, _)| EnemyIndex(enemy_index))
+            .next()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Enemy> {
+        self.enemies.iter().flatten()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.enemies.iter().all(Option::is_none)
+    }
+}
+
+impl Extend<Enemy> for EnemyList {
+    fn extend<T: IntoIterator<Item = Enemy>>(&mut self, iter: T) {
+        self.enemies.extend(iter.into_iter().map(Option::Some));
+    }
+}
+
+impl From<Vec<Enemy>> for EnemyList {
+    fn from(value: Vec<Enemy>) -> Self {
+        Self {
+            enemies: value.into_iter().map(Option::Some).collect(),
+        }
+    }
 }
 
 impl Hash for CombatState {
@@ -65,7 +138,7 @@ pub struct PostCombatState {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum CharacterIndex {
     Player,
-    Enemy(usize),
+    Enemy(EnemyIndex),
 }
 
 // TODO:
@@ -79,7 +152,7 @@ pub struct RunInfo {
 
 #[derive(Debug, Clone, Copy)]
 enum Target {
-    Explicit(Option<usize>),
+    Explicit(Option<EnemyIndex>),
     Random,
 }
 
@@ -256,7 +329,11 @@ impl CombatState {
                 // let result = Distribution::single_value(result);
 
                 result.flat_map_simple(|state| {
-                    state.play_card(card, Target::Explicit(target.map(Into::into)), true)
+                    state.play_card(
+                        card,
+                        Target::Explicit(target.map(|v| EnemyIndex(v.into()))),
+                        true,
+                    )
                 })
             }
             CombatAction::UsePotion { index } => todo!(),
@@ -371,7 +448,7 @@ impl CombatState {
     }
 
     fn draw_single_card<
-        Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
+        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         mut self,
     ) -> Distribution {
@@ -759,13 +836,17 @@ impl CombatState {
     }
 
     fn on_start_enemy_turn<
-        Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
+        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         mut self,
     ) -> Distribution {
         self.current_turn_side = CombatSide::Enemies;
 
-        for enemy in &mut self.enemies {
+        let state = self.for_all_enemies(|mut state, enemy_index| {
+            let Some(enemy) = state.enemies.get_mut(enemy_index) else {
+                return Distribution::single_value(state);
+            };
+
             enemy.creature.block = 0;
 
             let mut poison_dmg = enemy.creature.statuses[Status::Poison];
@@ -795,9 +876,15 @@ impl CombatState {
             enemy.creature.block += u16::try_from(enemy.creature.statuses[Status::Plating])
                 .expect("Plating cannot be negative");
             decrease_non_neg(&mut enemy.creature.statuses[Status::Plating]);
-        }
 
-        self.on_any_enemy_maybe_dead()
+            Distribution::single_value(state)
+        });
+
+        state.flat_map_simple(|state| state.on_any_enemy_maybe_dead())
+    }
+
+    fn enemy_is_alone(&self, enemy_index: EnemyIndex) -> bool {
+        self.enemies.iter().count() == 1
     }
 
     fn handle_enemy_actions<
@@ -806,103 +893,88 @@ impl CombatState {
         self,
     ) -> Distribution {
         // Enemy actions
-        let mut state = Distribution::single_value(self);
+        let state = self.for_all_enemies(|mut state, enemy_index| {
+            let alone = state.enemy_is_alone(enemy_index);
 
-        loop {
-            let mut did_act = false;
-            state = state.flat_map_simple(|mut state| {
-                let alone = state.enemies.len() == 1;
+            let Some(enemy) = state.enemies.get_mut(enemy_index) else {
+                return Distribution::single_value(state);
+            };
 
-                let enemy = state
-                    .enemies
-                    .iter_mut()
-                    .find_position(|enemy| !enemy.has_acted_this_turn);
+            enemy.has_acted_this_turn = true;
 
-                if let Some((index, enemy)) = enemy {
-                    enemy.has_acted_this_turn = true;
+            let action = enemy.prototype.get_moveset().eval(
+                &enemy.state_machine,
+                &enemy.creature.statuses,
+                alone,
+            );
 
-                    let action = enemy.prototype.get_moveset().eval(
-                        &enemy.state_machine,
-                        &enemy.creature.statuses,
-                        alone,
-                    );
-
-                    did_act = true;
-
-                    let mut state = Distribution::single_value(state);
-                    for action in action.actions {
-                        state = match action {
-                            EnemyAction::Attack {
-                                base_damage,
-                                repeat,
-                            } => {
-                                for _ in 0..*repeat {
-                                    state = state.flat_map_simple(|state| {
-                                        state.apply_attack_damage(
-                                            CharacterIndex::Enemy(index),
-                                            *base_damage,
-                                            CharacterIndex::Player,
-                                        )
-                                    });
-                                }
-                                state
-                            }
-                            EnemyAction::Block { amount } => state.flat_map_simple(|state| {
-                                state.add_block_to_creature(CharacterIndex::Enemy(index), *amount)
-                            }),
-                            EnemyAction::ApplyStatusSelf { status, diff } => {
-                                state.flat_map_simple(|state| {
-                                    state.apply_status_change(
-                                        CharacterIndex::Enemy(index),
-                                        *status,
-                                        *diff,
-                                    )
-                                })
-                            }
-                            EnemyAction::ApplyStatusPlayer { status, diff } => state
-                                .flat_map_simple(|state| {
-                                    state.apply_status_change(
-                                        CharacterIndex::Player,
-                                        *status,
-                                        *diff,
-                                    )
-                                }),
-                            EnemyAction::ShuffleCards { card, count, pile } => {
-                                state.map(|mut state| {
-                                    for _ in 0..*count {
-                                        match pile {
-                                            Pile::Draw => {
-                                                state.player.draw_pile.add_card(*card);
-                                            }
-                                            Pile::Hand => {
-                                                state.player.hand.add_card(*card);
-                                            }
-                                            Pile::Discard => {
-                                                state.player.discard_pile.add_card(*card);
-                                            }
-                                        }
-                                    }
-                                    state
-                                })
-                            }
-                        };
+            let mut state = Distribution::single_value(state);
+            for action in action.actions {
+                state = match action {
+                    EnemyAction::Attack {
+                        base_damage,
+                        repeat,
+                    } => {
+                        for _ in 0..*repeat {
+                            state = state.flat_map_simple(|state| {
+                                state.apply_attack_damage(
+                                    CharacterIndex::Enemy(enemy_index),
+                                    *base_damage,
+                                    CharacterIndex::Player,
+                                )
+                            });
+                        }
+                        state
                     }
-
-                    state
-                } else {
-                    Distribution::single_value(state)
-                }
-            });
-
-            if !did_act {
-                break;
+                    EnemyAction::Block { amount } => state.flat_map_simple(|state| {
+                        state.creature_add_block_to_itself(
+                            CharacterIndex::Enemy(enemy_index),
+                            *amount,
+                        )
+                    }),
+                    EnemyAction::ApplyStatusSelf { status, diff } => {
+                        state.flat_map_simple(|state| {
+                            state.apply_status_change(
+                                CharacterIndex::Enemy(enemy_index),
+                                *status,
+                                *diff,
+                            )
+                        })
+                    }
+                    EnemyAction::ApplyStatusPlayer { status, diff } => {
+                        state.flat_map_simple(|state| {
+                            state.apply_status_change(CharacterIndex::Player, *status, *diff)
+                        })
+                    }
+                    EnemyAction::ShuffleCards { card, count, pile } => state.map(|mut state| {
+                        for _ in 0..*count {
+                            match pile {
+                                Pile::Draw => {
+                                    state.player.draw_pile.add_card(*card);
+                                }
+                                Pile::Hand => {
+                                    state.player.hand.add_card(*card);
+                                }
+                                Pile::Discard => {
+                                    state.player.discard_pile.add_card(*card);
+                                }
+                            }
+                        }
+                        state
+                    }),
+                };
             }
-        }
+
+            state
+        });
 
         // Next enemy intents
         state.flat_map_simple(|state| {
             state.for_all_enemies(|mut state, enemy_index| {
-                let enemy = &mut state.enemies[enemy_index];
+                let Some(enemy) = state.enemies.get_mut(enemy_index) else {
+                    return Distribution::single_value(state);
+                };
+
                 let new_intent = enemy
                     .prototype
                     .get_moveset()
@@ -912,8 +984,12 @@ impl CombatState {
                     .map(|new_intent| {
                         let mut state = state.clone();
 
-                        state.enemies[enemy_index].state_machine = new_intent;
-                        state.enemies[enemy_index].has_acted_this_turn = false;
+                        let Some(enemy) = state.enemies.get_mut(enemy_index) else {
+                            unreachable!()
+                        };
+
+                        enemy.state_machine = new_intent;
+                        enemy.has_acted_this_turn = false;
 
                         state
                     })
@@ -923,7 +999,7 @@ impl CombatState {
     }
 
     fn on_end_enemy_turn<
-        Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
+        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         mut self,
     ) -> Distribution {
@@ -942,7 +1018,11 @@ impl CombatState {
             }
         }
 
-        for enemy in &mut self.enemies {
+        self.for_all_enemies(|mut state, enemy| {
+            let Some(enemy) = state.enemies.get_mut(enemy) else {
+                return Distribution::single_value(state);
+            };
+
             enemy.has_taken_unblocked_attack_damage_this_turn = false;
 
             let mut status_diff: EnumMap<Status, i16> = EnumMap::default();
@@ -979,9 +1059,9 @@ impl CombatState {
             {
                 *v += count;
             }
-        }
 
-        Distribution::single_value(self)
+            Distribution::single_value(state)
+        })
     }
 
     fn on_start_player_turn<
@@ -993,17 +1073,20 @@ impl CombatState {
         self.current_turn_side = CombatSide::Player;
 
         // Rampart Trigger
-        for i in 0..self.enemies.len() {
-            let rampart_amount = self.enemies[i].creature.statuses[Status::Rampart];
+        let enemies = self.enemies.all_alive_enemy_indices().collect_vec();
+        for i in enemies {
+            let Some(enemy) = self.enemies.get(i) else {
+                unreachable!()
+            };
+
+            let rampart_amount = enemy.creature.statuses[Status::Rampart];
             if rampart_amount > 0 {
                 // Find the target
-                let target = self
-                    .enemies
-                    .iter_mut()
-                    .enumerate()
-                    .find_map(|(target, enemy)| (i != target).then_some(enemy));
+                let Some(target) = self.enemies.get_teammate_index(i) else {
+                    continue;
+                };
 
-                if let Some(target) = target {
+                if let Some(target) = self.enemies.get_mut(target) {
                     target.creature.block +=
                         u16::try_from(rampart_amount).expect("Rampart must be positive");
                 }
@@ -1115,7 +1198,13 @@ impl CombatState {
                             continue;
                         }
                         // TODO: This does not respect triggers in 'apply_status'
-                        for enemy in &mut state.enemies {
+
+                        let enemies = state.enemies.all_alive_enemy_indices().collect_vec();
+                        for enemy in enemies {
+                            let Some(enemy) = state.enemies.get_mut(enemy) else {
+                                continue;
+                            };
+
                             if enemy.creature.statuses[Status::Artifact] > 0 {
                                 enemy.creature.statuses[Status::Artifact] -= 1;
                             } else {
@@ -1162,7 +1251,7 @@ impl CombatState {
     }
 
     fn draw_specific_card<
-        Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
+        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         mut self,
         card: Card,
@@ -1175,7 +1264,9 @@ impl CombatState {
         self.on_draw_card()
     }
 
-    fn on_draw_card<Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>>(
+    fn on_draw_card<
+        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
+    >(
         self,
     ) -> Distribution {
         // Stuff like kingly kick (I think that gets cheaper when you draw it)
@@ -1183,30 +1274,24 @@ impl CombatState {
         assert!(self.player.creature.statuses[Status::CorrosiveWave] >= 0);
         let corrosive = self.player.creature.statuses[Status::CorrosiveWave].abs();
 
-        let num_enemies = self.enemies.len();
         let mut state = Distribution::single_value(self);
-        // TODO: Index shift problems
 
         if corrosive > 0 {
             // Apply Corrosive
-            for enemy in 0..num_enemies {
-                state = state.flat_map_simple(|state| {
-                    state.apply_status_change(
-                        CharacterIndex::Enemy(enemy),
-                        Status::Poison,
-                        corrosive,
-                    )
-                });
-            }
+            state = state.flat_map_simple(|state| {
+                state.for_all_enemies(|state, enemy| {
+                    state.apply_status_to_enemy(enemy, Status::Poison, corrosive)
+                })
+            });
         }
 
         state
     }
 
     fn on_draw_non_draw_phase_card<
-        Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
+        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
-        mut self,
+        self,
     ) -> Distribution {
         // TODO: Stuff like speedster
 
@@ -1229,14 +1314,18 @@ impl CombatState {
 
         let state = match target {
             Target::Explicit(v) => {
-                Distribution::Inner::<(Self, Option<usize>)>::single_value((self, v))
+                Distribution::Inner::<(Self, Option<EnemyIndex>)>::single_value((self, v))
             }
-            Target::Random => Distribution::Inner::<(Self, Option<usize>)>::equal_chance(
+            Target::Random => Distribution::Inner::<(Self, Option<EnemyIndex>)>::equal_chance(
                 card.get_legal_targets()
                     .flat_map(|target| match target {
                         LegalTarget::OwnPlayer => vec![None],
                         LegalTarget::OtherPlayer => todo!(),
-                        LegalTarget::Enemy => (0..self.enemies.len()).map(Option::Some).collect(),
+                        LegalTarget::Enemy => self
+                            .enemies
+                            .all_alive_enemy_indices()
+                            .map(Option::Some)
+                            .collect(),
                     })
                     .map(|target| (self.clone(), target)),
             ),
@@ -1353,20 +1442,19 @@ impl CombatState {
                     let base_amount =
                         if card.upgraded { 10 } else { 8 } + card.enchantment.get_bonus_damage();
 
-                    // FIXME: If the enemy die, the index will shift....
                     let state = state.flat_map_simple(|state| {
-                        state.apply_status_to_enemy(
-                            target,
-                            Status::Weak,
-                            if card.upgraded { 2 } else { 1 },
-                        )
-                    });
-
-                    state.flat_map_simple(|state| {
                         state.apply_attack_damage(
                             CharacterIndex::Player,
                             base_amount,
                             CharacterIndex::Enemy(target),
+                        )
+                    });
+
+                    state.flat_map_simple(|state| {
+                        state.apply_status_to_enemy(
+                            target,
+                            Status::Weak,
+                            if card.upgraded { 2 } else { 1 },
                         )
                     })
                 }
@@ -1716,7 +1804,7 @@ impl CombatState {
                     });
 
                     state.flat_map_simple(|state| {
-                        let amount = state.calculate_block(
+                        let amount = state.calculate_block_with_status_modifiers(
                             CharacterIndex::Player,
                             if card.upgraded { 6 } else { 4 },
                         );
@@ -1910,21 +1998,13 @@ impl CombatState {
 
                         for _ in 0..repeats {
                             state = state.flat_map_simple(|state| {
-                                if state.enemies.is_empty() {
-                                    Distribution::single_value(state)
-                                } else {
-                                    Distribution::Inner::<Distribution>::equal_chance(
-                                        (0..state.enemies.len()).map(|enemy| {
-                                            let state = state.clone();
-                                            state.apply_attack_damage(
-                                                CharacterIndex::Player,
-                                                base_dmg,
-                                                CharacterIndex::Enemy(enemy),
-                                            )
-                                        }),
+                                state.get_random_enemy_equal_chance(|state, enemy| {
+                                    state.apply_attack_damage(
+                                        CharacterIndex::Player,
+                                        base_dmg,
+                                        CharacterIndex::Enemy(enemy),
                                     )
-                                    .flatten()
-                                }
+                                })
                             });
                         }
 
@@ -2030,7 +2110,7 @@ impl CombatState {
                         state
                             .relic_state
                             .set_state(RelicPrototype::OrnamentalFan, 0);
-                        state.add_block_to_creature(CharacterIndex::Player, 4)
+                        state.add_external_block_to_creature(CharacterIndex::Player, 4)
                     } else {
                         state
                             .relic_state
@@ -2105,36 +2185,49 @@ impl CombatState {
         Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         self,
-        fun: impl Fn(Self, usize) -> Distribution,
+        fun: impl Fn(Self, EnemyIndex) -> Distribution,
     ) -> Distribution {
-        let num_enemies = self.enemies.len();
-        let mut state = Distribution::single_value(self);
+        let indices = self.enemies.all_alive_enemy_indices();
+        // TODO: Avoid this clone
+        let mut state = Distribution::single_value(self.clone());
 
-        // FIXME: Index shifts
-        // FIXME: Rev is technically wrong, but it reduces the index shift issue (maybe?)
-        for enemy_index in (0..num_enemies).rev() {
+        for enemy_index in indices {
             state = state.flat_map_simple(|state| (fun)(state, enemy_index));
         }
 
         state
     }
 
+    fn get_random_enemy_equal_chance<
+        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
+    >(
+        self,
+        fun: impl Fn(Self, EnemyIndex) -> Distribution,
+    ) -> Distribution {
+        if self.enemies.is_empty() {
+            return Distribution::single_value(self);
+        }
+
+        let indices = self.enemies.all_alive_enemy_indices();
+        Distribution::Inner::<Distribution>::equal_chance(
+            indices.map(|index| (fun)(self.clone(), index)),
+        )
+        .flatten()
+    }
+
     fn repeat_single_enemy_cancel_if_dead<
         Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         self,
-        enemy_index: usize,
+        enemy_index: EnemyIndex,
         repeats: usize,
-        fun: impl Fn(Self, usize) -> Distribution,
+        fun: impl Fn(Self, EnemyIndex) -> Distribution,
     ) -> Distribution {
-        let num_enemies = self.enemies.len();
         let mut state = Distribution::single_value(self);
 
         for _ in 0..repeats {
             state = state.flat_map_simple(|state| {
-                if state.enemies.len() == num_enemies {
-                    // Only do it if nothing has died yet
-                    // TODO: This means this will stop if *anything* dies, which is wrong but close enough for now
+                if state.enemies.get(enemy_index).is_some() {
                     (fun)(state, enemy_index)
                 } else {
                     Distribution::single_value(state)
@@ -2168,7 +2261,8 @@ impl CombatState {
         mut self,
         base_amount: u16,
     ) -> Distribution {
-        let amount = self.calculate_block(CharacterIndex::Player, base_amount);
+        let amount =
+            self.calculate_block_with_status_modifiers(CharacterIndex::Player, base_amount);
 
         if self.relic_state.get_state(RelicPrototype::Vanbrace) == Some(0) {
             self.player.creature.block += amount * 2;
@@ -2182,20 +2276,25 @@ impl CombatState {
         Distribution::single_value(self)
     }
 
-    fn add_block_to_creature<
+    fn creature_add_block_to_itself<
         Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         mut self,
         creature: CharacterIndex,
         base_amount: u16,
     ) -> Distribution {
-        let amount = self.calculate_block(creature, base_amount);
+        let amount = self.calculate_block_with_status_modifiers(creature, base_amount);
 
         match creature {
             CharacterIndex::Player => {
                 self.player.creature.block += amount;
             }
-            CharacterIndex::Enemy(index) => self.enemies[index].creature.block += amount,
+            CharacterIndex::Enemy(index) => {
+                let Some(enemy) = self.enemies.get_mut(index) else {
+                    return Distribution::single_value(self);
+                };
+                enemy.creature.block += amount;
+            }
         }
 
         // TODO: Triggers
@@ -2210,23 +2309,22 @@ impl CombatState {
         creature: CharacterIndex,
         base_amount: u16,
     ) -> Distribution {
-        let status = match creature {
-            CharacterIndex::Player => &self.player.creature.statuses,
-            CharacterIndex::Enemy(index) => &self.enemies[index].creature.statuses,
-        };
-
         let mut amount = base_amount;
-
-        if status[Status::Shadowmeld] > 0 {
-            // Each stack of Shadowmeld doubles block gain, so this is exponential.
-            amount *= (1 << status[Status::Shadowmeld]);
-        }
 
         match creature {
             CharacterIndex::Player => {
+                if self.player.creature.statuses[Status::Shadowmeld] > 0 {
+                    // Each stack of Shadowmeld doubles block gain, so this is exponential.
+                    amount *= 1 << self.player.creature.statuses[Status::Shadowmeld];
+                }
                 self.player.creature.block += amount;
             }
-            CharacterIndex::Enemy(index) => self.enemies[index].creature.block += amount,
+            CharacterIndex::Enemy(index) => {
+                let Some(enemy) = self.enemies.get_mut(index) else {
+                    return Distribution::single_value(self);
+                };
+                enemy.creature.block += amount;
+            }
         }
 
         // TODO: Triggers
@@ -2234,10 +2332,19 @@ impl CombatState {
         Distribution::single_value(self)
     }
 
-    fn calculate_block(&self, creature: CharacterIndex, base_amount: u16) -> u16 {
+    fn calculate_block_with_status_modifiers(
+        &self,
+        creature: CharacterIndex,
+        base_amount: u16,
+    ) -> u16 {
         let status = match creature {
             CharacterIndex::Player => &self.player.creature.statuses,
-            CharacterIndex::Enemy(index) => &self.enemies[index].creature.statuses,
+            CharacterIndex::Enemy(index) => {
+                let Some(enemy) = self.enemies.get(index) else {
+                    return 0;
+                };
+                &enemy.creature.statuses
+            }
         };
 
         let amount = base_amount.saturating_add_signed(status[Status::Dexterity]);
@@ -2268,7 +2375,12 @@ impl CombatState {
     ) -> Distribution {
         let source_status = match source {
             CharacterIndex::Player => &mut self.player.creature.statuses,
-            CharacterIndex::Enemy(index) => &mut self.enemies[index].creature.statuses,
+            CharacterIndex::Enemy(index) => {
+                let Some(enemy) = self.enemies.get_mut(index) else {
+                    return Distribution::single_value(self);
+                };
+                &mut enemy.creature.statuses
+            }
         };
 
         let imbalanced = source_status[Status::Imbalanced] > 0;
@@ -2296,7 +2408,12 @@ impl CombatState {
 
         let target_status = match target {
             CharacterIndex::Player => &mut self.player.creature.statuses,
-            CharacterIndex::Enemy(index) => &mut self.enemies[index].creature.statuses,
+            CharacterIndex::Enemy(index) => {
+                let Some(enemy) = self.enemies.get_mut(index) else {
+                    return Distribution::single_value(self);
+                };
+                &mut enemy.creature.statuses
+            }
         };
 
         if target_status[Status::Weak] > 0
@@ -2338,7 +2455,9 @@ impl CombatState {
                     match source {
                         CharacterIndex::Player => todo!("Stun the player"),
                         CharacterIndex::Enemy(source_enemy_index) => {
-                            self.enemies[source_enemy_index].state_machine.stunned = 2;
+                            if let Some(enemy) = self.enemies.get_mut(source_enemy_index) {
+                                enemy.state_machine.stunned = 2;
+                            };
                         }
                     }
                 }
@@ -2353,42 +2472,46 @@ impl CombatState {
                 unblocked
             }
             CharacterIndex::Enemy(index) => {
-                let enemy_block = &mut self.enemies[index].creature.block;
+                let Some(enemy) = self.enemies.get_mut(index) else {
+                    return Distribution::single_value(self);
+                };
+
+                let enemy_block = &mut enemy.creature.block;
                 let mut unblocked = amount.saturating_sub(*enemy_block);
                 *enemy_block = enemy_block.saturating_sub(amount);
                 if unblocked > 0 {
-                    if self.enemies[index].creature.statuses[Status::Slippery] > 0 {
+                    if enemy.creature.statuses[Status::Slippery] > 0 {
                         unblocked = 1;
-                        self.enemies[index].creature.statuses[Status::Slippery] -= 1;
+                        enemy.creature.statuses[Status::Slippery] -= 1;
                     }
 
-                    if self.enemies[index].creature.statuses[Status::VitalSpark] > 0
+                    if enemy.creature.statuses[Status::VitalSpark] > 0
                         && source == CharacterIndex::Player
-                        && !self.enemies[index].has_taken_unblocked_attack_damage_this_turn
+                        && !enemy.has_taken_unblocked_attack_damage_this_turn
                     {
                         self.player.energy += 1;
                     }
 
-                    self.enemies[index].has_taken_unblocked_attack_damage_this_turn = true;
+                    enemy.has_taken_unblocked_attack_damage_this_turn = true;
+                }
+
+                enemy.creature.hp = enemy.creature.hp.saturating_sub(unblocked);
+                if enemy.creature.statuses[Status::CurlUp] > 0 {
+                    enemy.creature.block += u16::try_from(enemy.creature.statuses[Status::CurlUp])
+                        .expect("Curl up must be positive");
+                    enemy.creature.statuses[Status::CurlUp] = 0;
                 }
 
                 if unblocked == 0 && imbalanced {
                     match source {
                         CharacterIndex::Player => todo!("Stun the player"),
                         CharacterIndex::Enemy(source_enemy_index) => {
-                            self.enemies[source_enemy_index].state_machine.stunned = 2;
+                            if let Some(enemy) = self.enemies.get_mut(source_enemy_index) {
+                                enemy.state_machine.stunned = 2;
+                            };
                         }
                     }
                 }
-                self.enemies[index].creature.hp =
-                    self.enemies[index].creature.hp.saturating_sub(unblocked);
-                if self.enemies[index].creature.statuses[Status::CurlUp] > 0 {
-                    self.enemies[index].creature.block +=
-                        u16::try_from(self.enemies[index].creature.statuses[Status::CurlUp])
-                            .expect("Curl up must be positive");
-                    self.enemies[index].creature.statuses[Status::CurlUp] = 0;
-                }
-
                 unblocked
             }
         };
@@ -2407,10 +2530,13 @@ impl CombatState {
         state = state.map(|mut state| {
             match source {
                 CharacterIndex::Player => {
-                    state.player.creature.hp -= target_thorns;
+                    state.player.creature.hp =
+                        state.player.creature.hp.saturating_sub(target_thorns);
                 }
                 CharacterIndex::Enemy(index) => {
-                    state.enemies[index].creature.hp -= target_thorns;
+                    if let Some(enemy) = state.enemies.get_mut(index) {
+                        enemy.creature.hp = enemy.creature.hp.saturating_sub(target_thorns);
+                    };
                 }
             }
             state
@@ -2448,54 +2574,35 @@ impl CombatState {
         amount: u16,
         target: CharacterIndex,
     ) -> Distribution {
-        let target_status = match target {
-            CharacterIndex::Player => &mut self.player.creature.statuses,
-            CharacterIndex::Enemy(index) => &mut self.enemies[index].creature.statuses,
-        };
-
-        // TODO: Triggers
-        let unblocked = match target {
-            CharacterIndex::Player => {
-                let mut unblocked = amount.saturating_sub(self.player.creature.block);
-                self.player.creature.block = self.player.creature.block.saturating_sub(amount);
-                if unblocked > 0 && target_status[Status::Slippery] > 0 {
-                    unblocked = 1;
-                    target_status[Status::Slippery] -= 1;
-                }
-
-                self.player.creature.hp = self.player.creature.hp.saturating_sub(unblocked);
-                // TODO: Does this (stuff like stone calendar trigger CurlUp???)
-                if self.player.creature.statuses[Status::CurlUp] > 0 {
-                    self.player.creature.block +=
-                        u16::try_from(self.player.creature.statuses[Status::CurlUp])
-                            .expect("Curl up must be positive");
-                    self.player.creature.statuses[Status::CurlUp] = 0;
-                }
-
-                unblocked
-            }
-            CharacterIndex::Enemy(index) => {
-                let enemy_block = &mut self.enemies[index].creature.block;
-                let mut unblocked = amount.saturating_sub(*enemy_block);
-                *enemy_block = enemy_block.saturating_sub(amount);
-                if unblocked > 0 && self.enemies[index].creature.statuses[Status::Slippery] > 0 {
-                    unblocked = 1;
-                    self.enemies[index].creature.statuses[Status::Slippery] -= 1;
-                }
-
-                self.enemies[index].creature.hp =
-                    self.enemies[index].creature.hp.saturating_sub(unblocked);
-                // TODO: Does this (stuff like stone calendar trigger CurlUp???)
-                if self.enemies[index].creature.statuses[Status::CurlUp] > 0 {
-                    self.enemies[index].creature.block +=
-                        u16::try_from(self.enemies[index].creature.statuses[Status::CurlUp])
-                            .expect("Curl up must be positive");
-                    self.enemies[index].creature.statuses[Status::CurlUp] = 0;
-                }
-
-                unblocked
+        let target_creature = match target {
+            CharacterIndex::Player => &mut self.player.creature,
+            CharacterIndex::Enemy(enemy_index) => {
+                let Some(enemy) = self.enemies.get_mut(enemy_index) else {
+                    return Distribution::single_value(self);
+                };
+                &mut enemy.creature
             }
         };
+
+        let target_status = &mut target_creature.statuses;
+
+        // TODO: Triggers for losing block/hp
+
+        let mut unblocked = amount.saturating_sub(target_creature.block);
+        target_creature.block = target_creature.block.saturating_sub(amount);
+        if unblocked > 0 && target_status[Status::Slippery] > 0 {
+            unblocked = 1;
+            target_status[Status::Slippery] -= 1;
+        }
+
+        target_creature.hp = target_creature.hp.saturating_sub(unblocked);
+        // TODO: Does this (stuff like stone calendar trigger CurlUp???)
+        // TODO: Triggers for gaining block
+        if target_status[Status::CurlUp] > 0 {
+            target_creature.block +=
+                u16::try_from(target_status[Status::CurlUp]).expect("Curl up must be positive");
+            target_status[Status::CurlUp] = 0;
+        }
 
         let state = match target {
             CharacterIndex::Player => {
@@ -2512,7 +2619,7 @@ impl CombatState {
     }
 
     fn on_player_lost_hp<
-        Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
+        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         mut self,
     ) -> Distribution {
@@ -2533,19 +2640,23 @@ impl CombatState {
         Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         mut self,
-        enemy_index: usize,
+        enemy_index: EnemyIndex,
     ) -> Distribution {
-        if self.enemies[enemy_index].creature.statuses[Status::Slumber] > 0 {
-            self.enemies[enemy_index].creature.statuses[Status::Slumber] -= 1;
-            if self.enemies[enemy_index].creature.statuses[Status::Slumber] == 0 {
-                self.enemies[enemy_index].creature.statuses[Status::Plating] = 0;
-                self.enemies[enemy_index].state_machine.stunned = 1;
+        let Some(enemy) = self.enemies.get_mut(enemy_index) else {
+            return Distribution::single_value(self);
+        };
+
+        if enemy.creature.statuses[Status::Slumber] > 0 {
+            enemy.creature.statuses[Status::Slumber] -= 1;
+            if enemy.creature.statuses[Status::Slumber] == 0 {
+                enemy.creature.statuses[Status::Plating] = 0;
+                enemy.state_machine.stunned = 1;
             }
         }
-        if self.enemies[enemy_index].creature.statuses[Status::Asleep] > 0 {
-            self.enemies[enemy_index].creature.statuses[Status::Slumber] = 0;
-            self.enemies[enemy_index].creature.statuses[Status::Plating] = 0;
-            self.enemies[enemy_index].state_machine.stunned = 1;
+        if enemy.creature.statuses[Status::Asleep] > 0 {
+            enemy.creature.statuses[Status::Slumber] = 0;
+            enemy.creature.statuses[Status::Plating] = 0;
+            enemy.state_machine.stunned = 1;
         }
 
         self.on_any_enemy_maybe_dead()
@@ -2556,7 +2667,7 @@ impl CombatState {
     >(
         mut self,
     ) -> Distribution {
-        let dead = self.enemies.extract_if(.., |enemy| enemy.creature.hp == 0);
+        let dead = self.enemies.extract_dead();
 
         let mut summon_wrigglers = 0;
         for enemy in dead {
@@ -2616,7 +2727,7 @@ impl CombatState {
         Distribution: distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         self,
-        enemy_index: usize,
+        enemy_index: EnemyIndex,
         status: Status,
         diff: i16,
     ) -> Distribution {
