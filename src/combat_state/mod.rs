@@ -1,17 +1,16 @@
 use std::cmp::{max, min};
-use std::f32::DIGITS;
 use std::iter;
 
 use enum_map::{Enum, EnumMap};
 use itertools::{Either, Itertools};
 use std::hash::Hash;
 
-use crate::distribution;
-use crate::game_state::cards::{
+use crate::combat_state::cards::{
     Card, CardEnchantment, CardKind, CardPrototype, Cost, CostVal, EnchantmentExt, LegalTarget,
     UnorderedCardSet,
 };
-use crate::game_state::relics::{FullRelicState, RelicPrototype};
+use crate::combat_state::relics::{FullRelicState, RelicPrototype};
+use crate::distribution;
 use crate::{combat_action::CombatAction, distribution::Distribution};
 
 pub(crate) mod cards;
@@ -38,7 +37,7 @@ pub struct CombatState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct EnemyIndex(usize);
+pub struct EnemyIndex(usize);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EnemyList {
@@ -70,11 +69,11 @@ impl EnemyList {
     }
 
     pub fn get(&self, index: EnemyIndex) -> Option<&Enemy> {
-        self.enemies.get(index.0).map(Option::as_ref).flatten()
+        self.enemies.get(index.0).and_then(Option::as_ref)
     }
 
     pub fn get_mut(&mut self, index: EnemyIndex) -> Option<&mut Enemy> {
-        self.enemies.get_mut(index.0).map(Option::as_mut).flatten()
+        self.enemies.get_mut(index.0).and_then(Option::as_mut)
     }
 
     pub fn get_teammate_index(&self, main: EnemyIndex) -> Option<EnemyIndex> {
@@ -92,6 +91,28 @@ impl EnemyList {
 
     pub fn is_empty(&self) -> bool {
         self.enemies.iter().all(Option::is_none)
+    }
+
+    fn external_to_internal_index(&self, external: u8) -> EnemyIndex {
+        let idx = self
+            .enemies
+            .iter()
+            .enumerate()
+            .filter(|(_, enemy)| enemy.is_some())
+            .nth(usize::from(external))
+            .expect("External index was out of range")
+            .0;
+
+        EnemyIndex(idx)
+    }
+
+    fn internal_to_external_index(&self, internal: EnemyIndex) -> u8 {
+        self.enemies[0..internal.0]
+            .iter()
+            .filter(|enemy| enemy.is_some())
+            .count()
+            .try_into()
+            .expect("More than u8::MAX enemies???")
     }
 }
 
@@ -256,10 +277,12 @@ impl CombatState {
                             }
                             LegalTarget::OtherPlayer => todo!(),
                             LegalTarget::Enemy => {
-                                Either::Right(self.enemies.iter().enumerate().map(
-                                    |(enemy_index, _enemy)| CombatAction::PlayCard {
+                                Either::Right(self.enemies.all_alive_enemy_indices().map(
+                                    |enemy_index| CombatAction::PlayCard {
                                         card: *card,
-                                        target: Some(enemy_index as u8),
+                                        target: Some(
+                                            self.enemies.internal_to_external_index(enemy_index),
+                                        ),
                                     },
                                 ))
                             }
@@ -307,12 +330,12 @@ impl CombatState {
     pub(crate) fn apply<
         Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
-        &self,
+        self,
         action: CombatAction,
     ) -> Distribution {
         match action {
             CombatAction::PlayCard { card, target } => {
-                let mut result = self.clone();
+                let mut result = self;
 
                 result.player.hand.remove_card(card);
 
@@ -329,16 +352,13 @@ impl CombatState {
                 // let result = Distribution::single_value(result);
 
                 result.flat_map_simple(|state| {
-                    state.play_card(
-                        card,
-                        Target::Explicit(target.map(|v| EnemyIndex(v.into()))),
-                        true,
-                    )
+                    let target = target.map(|v| state.enemies.external_to_internal_index(v));
+                    state.play_card(card, Target::Explicit(target), true)
                 })
             }
             CombatAction::UsePotion { index } => todo!(),
             CombatAction::Choice { card } => {
-                let mut state = self.clone();
+                let mut state = self;
                 match state
                     .player
                     .waiting_for_decision
@@ -350,11 +370,7 @@ impl CombatState {
                     }
                 }
             }
-            CombatAction::EndTurn => {
-                let result = self.clone();
-
-                result.handle_turn_transitions()
-            }
+            CombatAction::EndTurn => self.handle_turn_transitions(),
         }
     }
 
@@ -472,6 +488,7 @@ impl CombatState {
 
             if self.relic_state.contains(RelicPrototype::BiiigHug) {
                 // TODO: HUGE INFO:
+                // TODO: Maybe that info is wrong???? I am super confused
                 // This Soot is always added at the bottom of the draw pile, not shuffled in.
                 // I currently ignore this (making BiiigHug quite a bit worse)
                 // This only overestimates (since the bottom position is a valid option when shuffling) the valid resulting states of actions (and therefore cannot lead to desyncs), but it changes the expected value of
@@ -485,13 +502,13 @@ impl CombatState {
         } else {
             let cards = self.player.draw_pile.iter_counts();
 
-            Distribution::Inner::<Card>::from_duplicates(
+            let cards_dis = Distribution::Inner::<Card>::from_duplicates(
                 cards
                     .into_iter()
                     .map(|(card, count)| (*card, usize::from(count))),
-            )
-            .map(|card| {
-                let mut new = self.clone();
+            );
+
+            Distribution::single_value(self).cartesian_product(cards_dis, |mut new, card| {
                 new.player.draw_pile.remove_card(card);
                 new.player.hand.add_card(card);
                 new
@@ -524,12 +541,14 @@ impl CombatState {
     fn draw_five_cards<
         Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
-        self,
+        mut self,
     ) -> Distribution {
         if self.player.hand.num_cards() > 5
-            || self.player.draw_pile_top_card.is_some()
-            || self.player.draw_pile.num_cards() + self.player.discard_pile.num_cards() < 5
-            || !Distribution::IS_SIZE_SENSITIVE
+        || self.player.draw_pile_top_card.is_some()
+        || self.player.draw_pile.num_cards() + self.player.discard_pile.num_cards() < 5
+        || !Distribution::IS_SIZE_SENSITIVE
+        // TODO: This is bad for full distributions, but lets be real, that only matters action application, not rollout
+        || self.player.draw_pile.num_cards() < 5
         {
             // Just do the simple thing for now, to ensure we draw the top card
             let num_cards = 5;
@@ -542,17 +561,28 @@ impl CombatState {
                 res.dedup();
             }
 
-            // This will produce lots of duplicated entries. Do reduce future work we dedup immediately
             assert!(res.len() > 0);
 
             return res;
         }
 
         if self.player.draw_pile.num_cards() < 5 {
+            // As part of the drawing we will shuffle the discard pile:
+
             let num_draw_pile_uniques = self.player.draw_pile.iter().count();
             let num_draw_pile_cards = self.player.draw_pile.num_cards();
-            let num_discard_pile_uniques = self.player.discard_pile.iter().count();
-            let num_discard_pile_cards = self.player.discard_pile.num_cards();
+            let post_shuffle_additions = if self.relic_state.contains(RelicPrototype::BiiigHug) {
+                vec![(CardPrototype::Soot.get_normal_card(), 1u8)]
+            } else {
+                vec![]
+            };
+            let num_discard_pile_uniques =
+                self.player.discard_pile.iter().count() + post_shuffle_additions.len();
+            let num_discard_pile_cards = self.player.discard_pile.num_cards()
+                + post_shuffle_additions
+                    .iter()
+                    .map(|(_, count)| usize::from(*count))
+                    .sum::<usize>();
 
             assert!(num_discard_pile_uniques > 0);
             let indices = (0..max(num_draw_pile_uniques, num_discard_pile_uniques))
@@ -599,8 +629,12 @@ impl CombatState {
                         }
                     }
 
-                    for (index, (_card, count)) in
-                        self.player.discard_pile.iter_counts().enumerate()
+                    for (index, (_card, count)) in self
+                        .player
+                        .discard_pile
+                        .iter_counts()
+                        .chain(post_shuffle_additions.iter().map(|(a, b)| (a, *b)))
+                        .enumerate()
                     {
                         if usize::from(count)
                             < v.iter()
@@ -978,12 +1012,12 @@ impl CombatState {
                 let new_intent = enemy
                     .prototype
                     .get_moveset()
-                    .advance(enemy.state_machine.clone(), &mut enemy.creature.statuses);
+                    .advance(enemy.state_machine.clone(), &mut enemy.creature.statuses)
+                    .into();
 
-                new_intent
-                    .map(|new_intent| {
-                        let mut state = state.clone();
-
+                Distribution::single_value(state).cartesian_product(
+                    new_intent,
+                    |mut state, new_intent| {
                         let Some(enemy) = state.enemies.get_mut(enemy_index) else {
                             unreachable!()
                         };
@@ -992,8 +1026,8 @@ impl CombatState {
                         enemy.has_acted_this_turn = false;
 
                         state
-                    })
-                    .into()
+                    },
+                )
             })
         })
     }
@@ -1299,7 +1333,6 @@ impl CombatState {
     }
 
     // The card must already be removed from whereever it came from, so we take it by value here to express that
-    #[allow(clippy::needless_pass_by_value)]
     fn play_card<
         Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
@@ -1331,12 +1364,26 @@ impl CombatState {
             ),
         };
 
-        // FIXME: Afterimage is rough, since it really needs the playstack, which we do not have properly yet
+        // FIXME: Afterimage/SerpentForm is rough, since it really needs the playstack, which we do not have properly yet
         // state = state.flat_map_simple(|state| {
         //     let amount = state.player.creature.statuses[Status::Afterimage]
         //         .try_into()
         //         .unwrap();
         //     state.add_block_to_creature(CharacterIndex::Player, amount)
+        // });
+
+        // state = state.flat_map_simple(|(state, target)| {
+        //     let amount = state.player.creature.statuses[Status::SerpentForm]
+        //         .try_into()
+        //         .unwrap();
+        //     state
+        //         .get_random_enemy_equal_chance(|state, enemy| {
+        //             state.apply_unsourced_damage::<Distribution>(
+        //                 amount,
+        //                 CharacterIndex::Enemy(enemy),
+        //             )
+        //         })
+        //         .map(|state| (state, target))
         // });
 
         let state: Distribution = state.flat_map::<Self>(|(state, target)| {
@@ -1399,6 +1446,12 @@ impl CombatState {
 
                     state.flat_map_simple(|slf| slf.add_block_from_card(base_amount))
                 }
+                CardPrototype::Untouchable => {
+                    assert!(target.is_none());
+                    let base_amount = if card.upgraded { 12 } else { 9 };
+
+                    state.flat_map_simple(|slf| slf.add_block_from_card(base_amount))
+                }
                 CardPrototype::Dash => {
                     let target = target.unwrap();
                     let base_amount = if card.upgraded { 13 } else { 10 };
@@ -1420,7 +1473,6 @@ impl CombatState {
                     let base_amount =
                         if card.upgraded { 4 } else { 3 } + card.enchantment.get_bonus_damage();
 
-                    // FIXME: Index shifts on kill!!!
                     let state = state.flat_map_simple(|state| {
                         state.apply_attack_damage(
                             CharacterIndex::Player,
@@ -1690,6 +1742,16 @@ impl CombatState {
                             CharacterIndex::Player,
                             Status::Dexterity,
                             if card.upgraded { 3 } else { 2 },
+                        )
+                    })
+                }
+                CardPrototype::SerpentForm => {
+                    assert!(target.is_none());
+                    state.flat_map_simple(|state| {
+                        state.apply_status_change(
+                            CharacterIndex::Player,
+                            Status::SerpentForm,
+                            if card.upgraded { 5 } else { 4 },
                         )
                     })
                 }
@@ -2187,9 +2249,11 @@ impl CombatState {
         self,
         fun: impl Fn(Self, EnemyIndex) -> Distribution,
     ) -> Distribution {
-        let indices = self.enemies.all_alive_enemy_indices();
-        // TODO: Avoid this clone
-        let mut state = Distribution::single_value(self.clone());
+        // TODO: Avoid this collect
+        let indices: smallvec::SmallVec<[_; 4]> = self.enemies.all_alive_enemy_indices().collect();
+        // TODO: or Avoid this clone
+        // let mut state = Distribution::single_value(self.clone());
+        let mut state = Distribution::single_value(self);
 
         for enemy_index in indices {
             state = state.flat_map_simple(|state| (fun)(state, enemy_index));
@@ -2457,7 +2521,7 @@ impl CombatState {
                         CharacterIndex::Enemy(source_enemy_index) => {
                             if let Some(enemy) = self.enemies.get_mut(source_enemy_index) {
                                 enemy.state_machine.stunned = 2;
-                            };
+                            }
                         }
                     }
                 }
@@ -2473,7 +2537,7 @@ impl CombatState {
             }
             CharacterIndex::Enemy(index) => {
                 let Some(enemy) = self.enemies.get_mut(index) else {
-                    return Distribution::single_value(self);
+                    unreachable!()
                 };
 
                 let enemy_block = &mut enemy.creature.block;
@@ -2508,7 +2572,7 @@ impl CombatState {
                         CharacterIndex::Enemy(source_enemy_index) => {
                             if let Some(enemy) = self.enemies.get_mut(source_enemy_index) {
                                 enemy.state_machine.stunned = 2;
-                            };
+                            }
                         }
                     }
                 }
@@ -2524,23 +2588,16 @@ impl CombatState {
                     Distribution::single_value(self)
                 }
             }
-            CharacterIndex::Enemy(enemy_index) => self.on_enemy_lost_hp(enemy_index),
-        };
-
-        state = state.map(|mut state| {
-            match source {
-                CharacterIndex::Player => {
-                    state.player.creature.hp =
-                        state.player.creature.hp.saturating_sub(target_thorns);
-                }
-                CharacterIndex::Enemy(index) => {
-                    if let Some(enemy) = state.enemies.get_mut(index) {
-                        enemy.creature.hp = enemy.creature.hp.saturating_sub(target_thorns);
-                    };
+            CharacterIndex::Enemy(enemy_index) => {
+                if unblocked > 0 {
+                    self.on_enemy_lost_hp(enemy_index)
+                } else {
+                    Distribution::single_value(self)
                 }
             }
-            state
-        });
+        };
+
+        state = state.flat_map_simple(|state| state.apply_unsourced_damage(target_thorns, source));
 
         state = if target_thorns > 0 {
             state.flat_map_simple(|state| match source {
@@ -2612,7 +2669,13 @@ impl CombatState {
                     Distribution::single_value(self)
                 }
             }
-            CharacterIndex::Enemy(enemy_index) => self.on_enemy_lost_hp(enemy_index),
+            CharacterIndex::Enemy(enemy_index) => {
+                if unblocked > 0 {
+                    self.on_enemy_lost_hp(enemy_index)
+                } else {
+                    Distribution::single_value(self)
+                }
+            }
         };
 
         state
@@ -2956,6 +3019,8 @@ pub enum Status {
     Thorns,
     #[serde(rename = "AFTERIMAGE_POWER")]
     Afterimage,
+    #[serde(rename = "SERPENT_FORM_POWER")]
+    SerpentForm,
     #[serde(rename = "PIERCING_WAIL_POWER")]
     PiercingWail,
     #[serde(rename = "RETAIN_HAND_POWER")]
@@ -3029,6 +3094,7 @@ impl Status {
             Status::Hex => true,
             Status::Dampen => true,
             Status::Blur => false,
+            Status::SerpentForm => false,
         }
     }
 }
@@ -4416,6 +4482,7 @@ pub(crate) mod test {
         CombatState {
             turn_counter: 0,
             player: Player::default(),
+            current_turn_side: CombatSide::Player,
             enemies: vec![
                 Enemy {
                     prototype: EnemyPrototype::FuzzyWurmCrawler,
@@ -4449,16 +4516,18 @@ pub(crate) mod test {
                     has_taken_unblocked_attack_damage_this_turn: false,
                     has_acted_this_turn: false,
                 },
-            ],
+            ]
+            .into(),
             relic_state: iter::empty().collect(),
         }
     }
 
     pub fn very_confused() -> CombatState {
-        use crate::game_state::CardPrototype::*;
-        use crate::game_state::EnemyPrototype::*;
+        use crate::combat_state::CardPrototype::*;
+        use crate::combat_state::EnemyPrototype::*;
         CombatState {
             turn_counter: 2,
+            current_turn_side: CombatSide::Player,
             player: Player {
                 hand: vec![
                     Card {
@@ -4543,6 +4612,7 @@ pub(crate) mod test {
                     block: 6,
                     statuses: EnumMap::default(),
                 },
+                skip_next_duration_tick: EnumMap::default(),
             },
             enemies: vec![
                 Enemy {
@@ -4577,17 +4647,20 @@ pub(crate) mod test {
                         ..Default::default()
                     },
                 },
-            ],
+            ]
+            .into(),
             relic_state: iter::empty().collect(),
         }
     }
 
     pub fn unneeded_blocking() -> CombatState {
-        use crate::game_state::CardPrototype::*;
-        use crate::game_state::EnemyPrototype::*;
+        use crate::combat_state::CardPrototype::*;
+        use crate::combat_state::EnemyPrototype::*;
         CombatState {
             turn_counter: 1,
+            current_turn_side: CombatSide::Player,
             player: Player {
+                skip_next_duration_tick: EnumMap::default(),
                 hand: vec![
                     Card {
                         prototype: Defend,
@@ -4651,7 +4724,8 @@ pub(crate) mod test {
                     current_state: 1,
                     ..Default::default()
                 },
-            }],
+            }]
+            .into(),
             relic_state: iter::empty().collect(),
         }
     }
@@ -4659,7 +4733,9 @@ pub(crate) mod test {
     pub fn transposition_test() -> CombatState {
         CombatState {
             turn_counter: 0,
+            current_turn_side: CombatSide::Player,
             player: Player {
+                skip_next_duration_tick: EnumMap::default(),
                 hand: vec![
                     CardPrototype::Defend.get_normal_card(),
                     CardPrototype::Strike.get_normal_card(),
@@ -4698,7 +4774,8 @@ pub(crate) mod test {
 
                 has_acted_this_turn: false,
                 has_taken_unblocked_attack_damage_this_turn: false,
-            }],
+            }]
+            .into(),
             relic_state: iter::empty().collect(),
         }
     }

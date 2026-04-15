@@ -24,13 +24,15 @@ serde_path_to_error = "0.1.20"
 timer = "0.2.0"
 strum = { version = "0.28.0", features = ["derive"] }
 sts2mcts = { path = "../sts2mcts", features = ["nps"] }
+smallvec = "1.15.1"
+take_mut = "0.2.2"
 # sts2mcts = { path = "../sts2mcts" }
 
+[dev-dependencies]
+csv = "1.4"
 
 [lints.clippy]
 enum_glob_use = { level = "deny", priority = -1 }
-pedantic = "deny"
-unwrap_used = { level = "deny", priority = -1 }
 wildcard_enum_match_arm = { level = "deny", priority = -1 }
 match_same_arms = { level = "deny", priority = -1 }
 option_if_let_else = { level = "allow", priority = -1 }

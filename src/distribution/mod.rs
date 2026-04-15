@@ -67,6 +67,14 @@ pub trait Distribution<Value: 'static>:
     fn flatten<T: 'static>(self) -> Self::Inner<T>
     where
         Value: Distribution<T>;
+
+    fn cartesian_product<T: 'static + Clone, U: 'static>(
+        self,
+        other: Self::Inner<T>,
+        fun: impl FnMut(Value, T) -> U,
+    ) -> Self::Inner<U>
+    where
+        Value: Clone;
 }
 
 pub trait Flatten<Value: 'static, D: Distribution<Value> + 'static>: Distribution<D> {

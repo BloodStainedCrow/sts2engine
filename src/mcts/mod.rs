@@ -5,8 +5,8 @@ use sts2mcts::mcts;
 
 use crate::{
     combat_action::CombatAction,
+    combat_state::{CombatSide, CombatState, Player},
     distribution::{Distribution, single},
-    game_state::CombatState,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -42,6 +42,10 @@ impl mcts::GameState for CombatState {
     }
 
     fn rollout_action(&self) -> Self::Action {
+        // TODO: One technique I read about, which seems very promising is the idea of recording the average utility of an action across the entire search tree, and use this information to bias the rollout.
+        // This seems like a good idea, since it should bias the rollout toward playing the "better" actions and hopefully should increase the number of victories in simulation. (Which I think I want...?)
+        // Source: https://www.sciencedirect.com/science/article/pii/S0004370214001052#se0060 (4.3.2. Move-average sampling technique (MAST))
+
         // Only click end turn during rollout, if no other options exist. This should prevent us from dying *quite as hard*
         // A higher percentage of games leading to *any* kind of victory should help us isolate the better action better
         self.legal_actions()
@@ -74,7 +78,19 @@ impl mcts::GameState for CombatState {
     }
 
     fn apply(&mut self, action: &Self::Action) {
-        let res = CombatState::apply::<single::Distribution<CombatState>>(self, *action).collapse();
-        *self = res;
+        // TODO: This means we abort when panicking, which seems annoying. Do try to quantify the amount this saves on performance
+        take_mut::take_or_recover(
+            self,
+            || CombatState {
+                turn_counter: 0,
+                current_turn_side: CombatSide::Player,
+                player: Player::default(),
+                enemies: vec![].into(),
+                relic_state: [].into_iter().collect(),
+            },
+            |state| {
+                CombatState::apply::<single::Distribution<CombatState>>(state, *action).collapse()
+            },
+        );
     }
 }

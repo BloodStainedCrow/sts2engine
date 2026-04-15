@@ -6,18 +6,16 @@ use std::{
     iter::Sum,
     ops::{Add, ControlFlow, Mul, Sub},
     sync::{Arc, atomic::AtomicBool},
-    thread,
     time::Duration,
 };
 
 use itertools::Itertools;
-use serde::de;
 use timer::Timer;
 
 use crate::{
     combat_action::CombatAction,
+    combat_state::{CombatState, PostCombatState},
     distribution::{self, Distribution},
-    game_state::{CombatState, PostCombatState},
 };
 
 #[derive(Debug)]
@@ -407,11 +405,11 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                 CombatAction::PlayCard { card, target } => {
                     // Look at rarer cards first
                     match card.get_rarity() {
-                        crate::game_state::cards::Rarity::Basic => 4,
-                        crate::game_state::cards::Rarity::Common => 3,
-                        crate::game_state::cards::Rarity::Uncommon => 2,
-                        crate::game_state::cards::Rarity::Rare => 1,
-                        crate::game_state::cards::Rarity::Special => 2,
+                        crate::combat_state::cards::Rarity::Basic => 4,
+                        crate::combat_state::cards::Rarity::Common => 3,
+                        crate::combat_state::cards::Rarity::Uncommon => 2,
+                        crate::combat_state::cards::Rarity::Rare => 1,
+                        crate::combat_state::cards::Rarity::Special => 2,
                     }
                 }
                 CombatAction::UsePotion { index } => 50,
@@ -528,11 +526,11 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                 CombatAction::PlayCard { card, target } => {
                     // Look at rarer cards first
                     match card.get_rarity() {
-                        crate::game_state::cards::Rarity::Basic => 4,
-                        crate::game_state::cards::Rarity::Common => 3,
-                        crate::game_state::cards::Rarity::Uncommon => 2,
-                        crate::game_state::cards::Rarity::Rare => 1,
-                        crate::game_state::cards::Rarity::Special => 2,
+                        crate::combat_state::cards::Rarity::Basic => 4,
+                        crate::combat_state::cards::Rarity::Common => 3,
+                        crate::combat_state::cards::Rarity::Uncommon => 2,
+                        crate::combat_state::cards::Rarity::Rare => 1,
+                        crate::combat_state::cards::Rarity::Special => 2,
                     }
                 }
                 CombatAction::UsePotion { index } => 50,
@@ -627,10 +625,14 @@ impl<F: EvaluationFunction> MicroEngine<F> {
             }
         }
 
-        let mut successors = state.apply::<distribution::full::Distribution<_>>(action);
+        let mut successors = state
+            .clone()
+            .apply::<distribution::full::Distribution<_>>(action);
         // Sort successors by rising probability (and as such by rising influence on the expected value)
         successors.sort_by(|a, b| b.1.total_cmp(&a.1));
         // TODO: Sort?
+
+        let turn_count = state.turn_counter;
 
         let mut event_info = successors
             .iter_with_odds()
@@ -640,8 +642,6 @@ impl<F: EvaluationFunction> MicroEngine<F> {
                 chance,
             })
             .collect_vec();
-
-        let turn_count = state.turn_counter;
 
         // probe transposition table for successor information
         for (i, (post_action_state, chance)) in successors.iter_with_odds().enumerate() {
@@ -827,7 +827,7 @@ mod test {
 
     use crate::{
         TestEngineCurrentHp,
-        game_state::{self, Creature, Enemy, EnemyStateMachine, Player},
+        combat_state::{self, Creature, Enemy, EnemyStateMachine, Player},
     };
 
     use super::*;
@@ -837,9 +837,10 @@ mod test {
         let spread = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
             player: Player::default(),
+            current_turn_side: combat_state::CombatSide::Player,
             enemies: vec![
                 Enemy {
-                    prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 49,
                         max_hp: 55,
@@ -854,7 +855,7 @@ mod test {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
-                    prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 49,
                         max_hp: 55,
@@ -868,15 +869,17 @@ mod test {
                     },
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
-            ],
+            ]
+            .into(),
             relic_state: iter::empty().collect(),
         });
         let focus = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
             player: Player::default(),
+            current_turn_side: combat_state::CombatSide::Player,
             enemies: vec![
                 Enemy {
-                    prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 43,
                         max_hp: 55,
@@ -891,7 +894,7 @@ mod test {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
-                    prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 55,
                         max_hp: 55,
@@ -905,7 +908,8 @@ mod test {
                     },
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
-            ],
+            ]
+            .into(),
             relic_state: iter::empty().collect(),
         });
 
@@ -915,9 +919,10 @@ mod test {
         let spread = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
             player: Player::default(),
+            current_turn_side: combat_state::CombatSide::Player,
             enemies: vec![
                 Enemy {
-                    prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 49,
                         max_hp: 55,
@@ -932,7 +937,7 @@ mod test {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
-                    prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 49,
                         max_hp: 55,
@@ -946,15 +951,17 @@ mod test {
                     },
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
-            ],
+            ]
+            .into(),
             relic_state: iter::empty().collect(),
         });
         let focus = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
             player: Player::default(),
+            current_turn_side: combat_state::CombatSide::Player,
             enemies: vec![
                 Enemy {
-                    prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 43,
                         max_hp: 55,
@@ -969,7 +976,7 @@ mod test {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
-                    prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 55,
                         max_hp: 55,
@@ -983,7 +990,8 @@ mod test {
                     },
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
-            ],
+            ]
+            .into(),
             relic_state: iter::empty().collect(),
         });
 
@@ -997,9 +1005,10 @@ mod test {
         let state = CombatState {
             turn_counter: 0,
             player: Player::default(),
+            current_turn_side: combat_state::CombatSide::Player,
             enemies: vec![
                 Enemy {
-                    prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 49,
                         max_hp: 55,
@@ -1014,7 +1023,7 @@ mod test {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
-                    prototype: game_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 55,
                         max_hp: 55,
@@ -1028,7 +1037,8 @@ mod test {
                     },
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
-            ],
+            ]
+            .into(),
             relic_state: iter::empty().collect(),
         };
 
@@ -1045,7 +1055,7 @@ mod test {
     fn test_action_map_different_values() {
         let mut engine = MicroEngine::new(TestEngineCurrentHp {});
 
-        let state = game_state::test::unneeded_blocking();
+        let state = combat_state::test::unneeded_blocking();
 
         let map = engine
             .get_action_map(&state, 10)
@@ -1065,7 +1075,7 @@ mod test {
 
     #[test]
     fn test_eval() {
-        let mut state = game_state::test::simple_test_combat_state();
+        let mut state = combat_state::test::simple_test_combat_state();
 
         let mut engine = MicroEngine::new(TestEngineCurrentHp {});
 
@@ -1163,7 +1173,7 @@ mod test {
     fn next_combat_action_consistent() {
         let all_equal = (0..1000)
             .map(|_| {
-                let state = game_state::test::simple_test_combat_state();
+                let state = combat_state::test::simple_test_combat_state();
                 let mut engine = MicroEngine::new(TestEngineCurrentHp {});
                 engine
                     .next_combat_action(&state, 3, Duration::from_secs(1_000_000), |_| {})

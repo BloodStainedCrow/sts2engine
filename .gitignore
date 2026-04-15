@@ -1,3 +1,6 @@
 /target
 profile.json.gz
 *.temp
+*.csv
+*.csv#
+dhat.out.*

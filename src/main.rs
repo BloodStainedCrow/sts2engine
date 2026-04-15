@@ -2,7 +2,7 @@
 #![feature(allocator_api)]
 
 use mimalloc::MiMalloc;
-use sts2mcts::mcts::MCTS;
+use sts2mcts::mcts::ParMCTS;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -16,21 +16,23 @@ use std::{
 use itertools::Itertools;
 
 use crate::{
+    combat_state::{
+        CombatState, Creature, Enemy, Player, PostCombatState, RunInfo, Status,
+        cards::{Card, CardPrototype},
+        relics::FullRelicState,
+    },
     comm::Comm,
     distribution::Distribution,
-    game_state::{
-        CombatState, PostCombatState, RunInfo, Status,
-        cards::{Card, CardPrototype},
-    },
     micro_engine::{EvalResult, EvaluationFunction},
 };
 
 mod combat_action;
+mod combat_state;
 mod comm;
 mod distribution;
-mod game_state;
 mod mcts;
 mod micro_engine;
+mod run_state;
 
 struct TestEngineCurrentHp {}
 
@@ -126,10 +128,19 @@ fn main() {
     run_mcts();
 }
 
+// TODO(BSC): Huge TODO, profiling revealed around 20% of runtime being in memcpy due to LLVM not optimizing the moves for all the CombatState function, which take the State by value and return it
+//                       (wrapped in Distribution::single). This causes lots of memcpy calls many of which LLVM seems to be unable to remove
+
 fn run_mcts() {
+    dbg!(size_of::<CombatState>());
+    dbg!(size_of::<Player>());
+    dbg!(size_of::<Enemy>());
+    dbg!(size_of::<Creature>());
+    dbg!(size_of::<FullRelicState>());
+
     let mut comm = Comm::new();
     loop {
-        let pre_first_turn_state = game_state::CombatState::get_starting_states::<
+        let pre_first_turn_state = combat_state::CombatState::get_starting_states::<
             distribution::full::Distribution<_>,
         >(comm.guess_encounter(), &comm.get_run_state(), |hps| {
             comm.filter_hp(hps)
@@ -137,35 +148,48 @@ fn run_mcts() {
 
         let mut state = pre_first_turn_state;
 
-        loop {
-            state.dedup();
-            let real_state_res = comm.find_valid_combat_states(state.into_values().collect());
+        let real_state_res = comm.find_valid_combat_states(state.into_values().collect());
+        let Ok(mut real_state) = real_state_res else {
+            panic!("No valid option for starting state. Are the relics correct?");
+        };
 
-            let Ok(real_state) = real_state_res else {
-                println!("No valid option!");
-                // Lets assume we failed because the combat is over
-                break;
-            };
+        if real_state.get_post_game_state().is_none() {
+            // Run the engine
+            let mut engine: ParMCTS<CombatState> = ParMCTS::new(real_state.clone());
 
-            if real_state.get_post_game_state().is_some() {
-                break;
+            loop {
+                // Do not discard the full game tree, since previous work is still valuable
+                engine.advance(&real_state);
+
+                let action = engine.par_search(Duration::from_secs(5));
+                dbg!(engine.principal_chain().collect_vec());
+                dbg!(sts2mcts::mcts::NODES_CHECKED.load(std::sync::atomic::Ordering::Relaxed));
+                dbg!(action);
+
+                comm.apply_action(action);
+                let animations_done = Instant::now() + Duration::from_secs(2);
+                state = real_state.apply(action);
+
+                // After applying the action on the game, we need to wait for stuff to settle (I do not know what the game returns while the animations are playing)
+                // TODO: Use the time on calcs instead of just waiting
+                // engine.par_search(Duration::from_secs(4));
+                thread::sleep(animations_done - Instant::now());
+
+                state.dedup();
+                let real_state_res = comm.find_valid_combat_states(state.into_values().collect());
+
+                let Ok(new_real_state) = real_state_res else {
+                    println!("No valid option!");
+                    // Lets assume we failed because the combat is over
+                    break;
+                };
+
+                if new_real_state.get_post_game_state().is_some() {
+                    break;
+                }
+
+                real_state = new_real_state;
             }
-
-            // TODO: Do not discard the full game tree, since previous work is still valuable
-            let mut engine: MCTS<CombatState> = MCTS::new(real_state.clone());
-            let action = engine.par_search(Duration::from_secs(5));
-            dbg!(sts2mcts::mcts::NODES_CHECKED.load(std::sync::atomic::Ordering::Relaxed));
-            dbg!(action);
-
-            comm.apply_action(action);
-            let animations_done = Instant::now() + Duration::from_secs(2);
-            state = real_state.apply(action);
-
-            // After applying the action on the game, we need to wait for stuff to settle (I do not know what the game returns while the animations are playing)
-            // TODO: Use the time on calcs instead of just waiting
-            // engine.par_search(Duration::from_secs(4));
-
-            thread::sleep(animations_done - Instant::now());
         }
 
         println!("No more action, is the fight over?");
@@ -174,12 +198,12 @@ fn run_mcts() {
 }
 
 fn run_expectimax() {
-    use game_state::relics::RelicPrototype::*;
+    use combat_state::relics::RelicPrototype::*;
 
     // TODO: Assume specific fight
     let pre_first_turn_state =
-        game_state::CombatState::get_starting_states::<distribution::full::Distribution<_>>(
-            game_state::encounter::EncounterPrototype::RubyRaiders,
+        combat_state::CombatState::get_starting_states::<distribution::full::Distribution<_>>(
+            combat_state::encounter::EncounterPrototype::RubyRaiders,
             &RunInfo {
                 hp: 68,
                 max_hp: 70,
@@ -242,7 +266,7 @@ fn run_expectimax() {
         let presumed_done = start + Duration::from_secs(4);
 
         // Use the time on calcs insread of just waiting
-        engine.next_combat_action(&real_state, 99, Duration::from_secs(4), |_| {});
+        // engine.next_combat_action(&real_state, 99, Duration::from_secs(4), |_| {});
 
         thread::sleep(presumed_done - start);
     }

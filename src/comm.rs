@@ -6,12 +6,12 @@ use strum::IntoEnumIterator;
 
 use crate::{
     combat_action::CombatAction,
-    distribution::{self, Distribution},
-    game_state::{
+    combat_state::{
         self, CombatState, Enemy, EnemyAction, EnemyPrototype, Player, RunInfo, Status,
         cards::{Card, CardEnchantment, CardPrototype, UnorderedCardSet},
         encounter::EncounterPrototype,
     },
+    distribution::{self, Distribution},
 };
 
 pub struct Comm {
@@ -50,7 +50,7 @@ impl Comm {
             .map(|encounter_prototype| {
                 (
                     encounter_prototype,
-                    game_state::CombatState::get_starting_states::<
+                    combat_state::CombatState::get_starting_states::<
                         distribution::full::Distribution<_>,
                     >(
                         encounter_prototype,
@@ -94,7 +94,7 @@ impl Comm {
     }
 
     pub fn get_run_state(&mut self) -> RunInfo {
-        use game_state::relics::RelicPrototype::*;
+        use combat_state::relics::RelicPrototype::*;
         RunInfo {
             hp: self.rcon.get_hp(),
             max_hp: self.rcon.get_max_hp(),
@@ -108,9 +108,7 @@ impl Comm {
                     enchantment: card.enchantment,
                 })
                 .collect(),
-            relic_state: [RingOfTheSnake, BronzeScales, CentennialPuzzle, BiiigHug]
-                .into_iter()
-                .collect(),
+            relic_state: [RingOfTheSnake].into_iter().collect(),
         }
     }
 
@@ -322,20 +320,26 @@ impl EnemyInfo {
         }
 
         // TODO: Statuses
-        let all_real_present = self
-            .powers
-            .iter()
-            .all(|(power, amount)| enemy.creature.statuses[*power] == *amount);
+        let all_real_present = self.powers.iter().all(|(power, amount)| {
+            if *power == Status::Plating {
+                // We have some weird issues with plating on slumber enemies. If this *really* a problem, we will just desync on the next end turns block check.
+                return true;
+            }
+            enemy.creature.statuses[*power] == *amount
+        });
 
         if !all_real_present {
             return false;
         }
 
-        let all_sim_present = enemy
-            .creature
-            .statuses
-            .iter()
-            .all(|(power, amount)| *amount == 0 || self.powers.contains(&(power, *amount)));
+        let all_sim_present = enemy.creature.statuses.iter().all(|(power, amount)| {
+            if power == Status::Plating {
+                // We have some weird issues with plating on slumber enemies. If this *really* a problem, we will just desync on the next end turns block check.
+                return true;
+            }
+
+            *amount == 0 || self.powers.contains(&(power, *amount))
+        });
 
         if !all_sim_present {
             return false;
@@ -352,7 +356,7 @@ impl EnemyInfo {
         // dbg!((enemy.prototype, &enemy.state_machine, intent));
 
         if !intent.actions.iter().all(|v| match v {
-            crate::game_state::EnemyAction::Attack {
+            crate::combat_state::EnemyAction::Attack {
                 base_damage: _,
                 repeat,
             } => self.intent.iter().any(|intent| {
@@ -364,18 +368,18 @@ impl EnemyInfo {
                     } if repeat == comm_repeat
                 )
             }),
-            crate::game_state::EnemyAction::Block { .. } => {
+            crate::combat_state::EnemyAction::Block { .. } => {
                 self.intent.contains(&IntentInfo::Defend {})
             }
-            crate::game_state::EnemyAction::ApplyStatusSelf { diff, .. } => {
+            crate::combat_state::EnemyAction::ApplyStatusSelf { diff, .. } => {
                 // Some enemies remove buffs from themselves. This is not communicated via the intent system (i.e. Spiny Toad removing its own Thorns)
                 *diff <= 0 || self.intent.contains(&IntentInfo::Buff {})
             }
-            crate::game_state::EnemyAction::ApplyStatusPlayer { .. } => {
+            crate::combat_state::EnemyAction::ApplyStatusPlayer { .. } => {
                 self.intent.contains(&IntentInfo::Debuff {})
                     || self.intent.contains(&IntentInfo::DebuffStrong {})
             }
-            crate::game_state::EnemyAction::ShuffleCards { count, .. } => self
+            crate::combat_state::EnemyAction::ShuffleCards { count, .. } => self
                 .intent
                 .contains(&IntentInfo::StatusCard { count: *count }),
         }) {

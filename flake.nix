@@ -32,16 +32,6 @@
     ];
 
     neededPackages = with pkgs; [
-      wayland
-      xorg.libX11
-      xorg.libXcursor
-      xorg.libXrandr
-      xorg.libXi
-      libxkbcommon
-
-      openssl
-
-      vulkan-headers vulkan-loader
     ];
 
     package_for_target = {
@@ -78,6 +68,7 @@
         perf
         samply
         bacon
+        valgrind
 
         (vscode-with-extensions.override {
           vscode = pkgs-codium.vscodium;

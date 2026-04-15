@@ -3,11 +3,11 @@ use itertools::Itertools;
 use strum::EnumIter;
 
 use crate::{
-    distribution,
-    game_state::{
+    combat_state::{
         CharacterIndex, CombatState, Creature, Enemy, EnemyPrototype, EnemyStateMachine, Player,
         RelicPrototype, RunInfo, Status,
     },
+    distribution,
 };
 
 #[derive(Debug, Clone, Copy, EnumIter)]
@@ -59,7 +59,6 @@ pub enum Act {
 
 impl EncounterPrototype {
     pub fn is_finished_implementing(self) -> bool {
-        use Act::*;
         match self {
             EncounterPrototype::SoloTunneler => false,
             EncounterPrototype::TheLostAndForgotten => false,

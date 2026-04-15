@@ -1,7 +1,4 @@
-use rand::{
-    random_range, rng,
-    seq::{IndexedRandom, IteratorRandom},
-};
+use rand::{random_range, rng, seq::IteratorRandom};
 use std::{
     cmp::Ordering,
     hash::Hash,
@@ -154,6 +151,19 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
         Distribution {
             value: self.value.collapse(),
         }
+    }
+
+    fn cartesian_product<T: 'static + Clone, U: 'static>(
+        self,
+        other: Self::Inner<T>,
+        mut fun: impl FnMut(Value, T) -> U,
+    ) -> Self::Inner<U>
+    where
+        Value: Clone,
+    {
+        let res = (fun)(self.value, other.value);
+
+        Distribution { value: res }
     }
 }
 

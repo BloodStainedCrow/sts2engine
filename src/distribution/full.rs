@@ -226,6 +226,27 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
                 .collect(),
         }
     }
+
+    fn cartesian_product<T: 'static + Clone, U: 'static>(
+        self,
+        other: Self::Inner<T>,
+        mut fun: impl FnMut(Value, T) -> U,
+    ) -> Self::Inner<U>
+    where
+        Value: Clone,
+    {
+        let values = self
+            .entries
+            .into_iter()
+            .cartesian_product(other.entries)
+            .map(|((first, first_chance), (second, second_chance))| {
+                ((fun)(first, second), first_chance * second_chance)
+            });
+
+        Distribution {
+            entries: values.collect(),
+        }
+    }
 }
 
 impl<Value: 'static> IntoIterator for Distribution<Value> {

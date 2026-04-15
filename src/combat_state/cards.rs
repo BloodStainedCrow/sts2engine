@@ -1,7 +1,9 @@
 use std::hash::{Hash, Hasher};
 
+use enum_map::Enum;
 use itertools::Itertools;
 use rapidhash::fast::RapidHasher;
+use strum::Display;
 
 #[derive(Debug, Clone, Eq)]
 pub struct UnorderedCardSet {
@@ -280,6 +282,8 @@ impl Card {
             (CardPrototype::Shadowmeld, false) => ENERGY[1],
             (CardPrototype::Shadowmeld, true) => ENERGY[0],
             (CardPrototype::Blur, _) => ENERGY[1],
+            (CardPrototype::SerpentForm, _) => ENERGY[3],
+            (CardPrototype::Untouchable, _) => ENERGY[2],
         };
 
         if self.enchantment == Some(CardEnchantment::TezcatarasEmber) {
@@ -350,6 +354,8 @@ impl Card {
             CardPrototype::Mayhem => [LegalTarget::OwnPlayer],
             CardPrototype::Shadowmeld => [LegalTarget::OwnPlayer],
             CardPrototype::Blur => [LegalTarget::OwnPlayer],
+            CardPrototype::SerpentForm => [LegalTarget::OwnPlayer],
+            CardPrototype::Untouchable => [LegalTarget::OwnPlayer],
         }
         .into_iter()
     }
@@ -414,6 +420,8 @@ impl Card {
             CardPrototype::Mayhem => Rare,
             CardPrototype::Shadowmeld => Rare,
             CardPrototype::Blur => Uncommon,
+            CardPrototype::SerpentForm => Rare,
+            CardPrototype::Untouchable => Common,
         }
     }
 
@@ -461,6 +469,7 @@ impl Card {
             CardPrototype::Abrasive => true,
             CardPrototype::Tactician => true,
             CardPrototype::Ricochet => true,
+            CardPrototype::Untouchable => true,
             _ => false,
         }
     }
@@ -474,7 +483,7 @@ impl Card {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Display, PartialEq, Eq, PartialOrd, Ord, Enum)]
 pub enum Rarity {
     Basic,
     Common,
@@ -549,6 +558,8 @@ pub enum CardPrototype {
     Mayhem,
     Shadowmeld,
     Blur,
+    SerpentForm,
+    Untouchable,
 }
 
 impl CardPrototype {
@@ -620,6 +631,8 @@ impl CardPrototype {
             Self::Mayhem => Power,
             Self::Shadowmeld => Skill,
             Self::Blur => Skill,
+            Self::SerpentForm => Power,
+            Self::Untouchable => Skill,
         }
     }
 }
