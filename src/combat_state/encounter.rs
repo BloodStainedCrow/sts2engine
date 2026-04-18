@@ -1,5 +1,5 @@
 use enum_map::EnumMap;
-use itertools::Itertools;
+use itertools::{Itertools, iproduct};
 use strum::EnumIter;
 
 use crate::{
@@ -10,7 +10,7 @@ use crate::{
     distribution,
 };
 
-#[derive(Debug, Clone, Copy, EnumIter)]
+#[derive(Debug, Clone, Copy, EnumIter, PartialEq, Eq)]
 pub enum EncounterPrototype {
     FuzzyWurmCrawler,
     SingleNibbit,
@@ -30,7 +30,9 @@ pub enum EncounterPrototype {
     BowlbugsStrong,
     SoloTunneler,
     // TODO: Exoskeletons have rules like "after X always use Y", which I do not support yet
-    // ExoskeletonEasy,
+    ExoskeletonWeak,
+    ExoskeletonStrong,
+    Mytes,
     SpinyToad,
     LouseProgenitor,
     InfestedPrism,
@@ -48,21 +50,34 @@ pub enum EncounterPrototype {
     Knights,
     TheLostAndForgotten,
     JaxfruitAndFlyconid,
+    ConstructGang,
+    Queen,
+    TestSubject,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Act {
-    Act1,
-    Act2,
-    Act3,
+    Overgrowth,
+    Underdocks,
+    Hive,
+    Glory,
 }
 
 impl EncounterPrototype {
     pub fn is_finished_implementing(self) -> bool {
         match self {
-            EncounterPrototype::SoloTunneler => false,
+            // Slow status condition
+            EncounterPrototype::BygoneEffigy => false,
+
+            // Returning the status on death
             EncounterPrototype::TheLostAndForgotten => false,
-            EncounterPrototype::SoulNexus => false,
+
+            // Frantic Escape changing cost over time
+            EncounterPrototype::TheInsatiable => false,
+
+            // Chains of Binding Status
+            // Teammate move crash if dies to poison
+            EncounterPrototype::Queen => false,
 
             _ => true,
         }
@@ -71,38 +86,44 @@ impl EncounterPrototype {
     pub fn get_act(self) -> Act {
         use Act::*;
         match self {
-            EncounterPrototype::FuzzyWurmCrawler => Act1,
-            EncounterPrototype::SingleNibbit => Act1,
-            EncounterPrototype::DoubleNibbit => Act1,
-            EncounterPrototype::SlimesWeak => Act1,
-            EncounterPrototype::ShrinkerBeetle => Act1,
-            EncounterPrototype::Byrdonis => Act1,
-            EncounterPrototype::PhrogParasite => Act1,
-            EncounterPrototype::BygoneEffigy => Act1,
-            EncounterPrototype::SingleCubexConstruct => Act1,
-            EncounterPrototype::BeetleAndFuzzy => Act1,
-            EncounterPrototype::RubyRaiders => Act1,
-            EncounterPrototype::JaxfruitAndFlyconid => Act1,
-            EncounterPrototype::Vantom => Act1,
-            EncounterPrototype::TheKin => Act1,
-            EncounterPrototype::BowlbugsWeak => Act2,
-            EncounterPrototype::BowlbugsStrong => Act2,
-            EncounterPrototype::SoloTunneler => Act2,
-            EncounterPrototype::LouseProgenitor => Act2,
-            EncounterPrototype::SpinyToad => Act2,
-            EncounterPrototype::InfestedPrism => Act2,
-            EncounterPrototype::Entomancer => Act2,
-            EncounterPrototype::Chompers => Act2,
-            EncounterPrototype::SlumberParty => Act2,
-            EncounterPrototype::TheInsatiable => Act2,
-            EncounterPrototype::TurretOperator => Act3,
-            EncounterPrototype::DevotedSculptor => Act3,
-            EncounterPrototype::OwlMagistrate => Act3,
-            EncounterPrototype::SlimedBerserker => Act3,
-            EncounterPrototype::MechaKnight => Act3,
-            EncounterPrototype::Knights => Act3,
-            EncounterPrototype::SoulNexus => Act3,
-            EncounterPrototype::TheLostAndForgotten => Act3,
+            EncounterPrototype::FuzzyWurmCrawler => Overgrowth,
+            EncounterPrototype::SingleNibbit => Overgrowth,
+            EncounterPrototype::DoubleNibbit => Overgrowth,
+            EncounterPrototype::SlimesWeak => Overgrowth,
+            EncounterPrototype::ShrinkerBeetle => Overgrowth,
+            EncounterPrototype::Byrdonis => Overgrowth,
+            EncounterPrototype::PhrogParasite => Overgrowth,
+            EncounterPrototype::BygoneEffigy => Overgrowth,
+            EncounterPrototype::SingleCubexConstruct => Overgrowth,
+            EncounterPrototype::BeetleAndFuzzy => Overgrowth,
+            EncounterPrototype::RubyRaiders => Overgrowth,
+            EncounterPrototype::JaxfruitAndFlyconid => Overgrowth,
+            EncounterPrototype::Vantom => Overgrowth,
+            EncounterPrototype::TheKin => Overgrowth,
+            EncounterPrototype::BowlbugsWeak => Hive,
+            EncounterPrototype::BowlbugsStrong => Hive,
+            EncounterPrototype::ExoskeletonWeak => Hive,
+            EncounterPrototype::ExoskeletonStrong => Hive,
+            EncounterPrototype::SoloTunneler => Hive,
+            EncounterPrototype::LouseProgenitor => Hive,
+            EncounterPrototype::SpinyToad => Hive,
+            EncounterPrototype::InfestedPrism => Hive,
+            EncounterPrototype::Entomancer => Hive,
+            EncounterPrototype::Chompers => Hive,
+            EncounterPrototype::Mytes => Hive,
+            EncounterPrototype::SlumberParty => Hive,
+            EncounterPrototype::TheInsatiable => Hive,
+            EncounterPrototype::TurretOperator => Glory,
+            EncounterPrototype::DevotedSculptor => Glory,
+            EncounterPrototype::OwlMagistrate => Glory,
+            EncounterPrototype::SlimedBerserker => Glory,
+            EncounterPrototype::MechaKnight => Glory,
+            EncounterPrototype::Knights => Glory,
+            EncounterPrototype::SoulNexus => Glory,
+            EncounterPrototype::TheLostAndForgotten => Glory,
+            EncounterPrototype::ConstructGang => Glory,
+            EncounterPrototype::Queen => Glory,
+            EncounterPrototype::TestSubject => Glory,
         }
     }
 
@@ -141,6 +162,12 @@ impl EncounterPrototype {
             EncounterPrototype::Knights => true,
             EncounterPrototype::SoulNexus => true,
             EncounterPrototype::TheLostAndForgotten => false,
+            EncounterPrototype::ConstructGang => false,
+            EncounterPrototype::Queen => false,
+            EncounterPrototype::ExoskeletonWeak => false,
+            EncounterPrototype::ExoskeletonStrong => false,
+            EncounterPrototype::Mytes => false,
+            EncounterPrototype::TestSubject => false,
         }
     }
 }
@@ -158,13 +185,12 @@ impl CombatState {
             turn_counter: 0,
             current_turn_side: super::CombatSide::Player,
 
-            player: Player {
+            player: Box::new(Player {
                 hand: vec![].into_iter().collect(),
                 draw_pile: run_info.deck.clone().into_iter().collect(),
                 draw_pile_top_card: None,
                 discard_pile: vec![].into_iter().collect(),
                 exhaust_pile: vec![].into_iter().collect(),
-                play_pile: vec![].into_iter().collect(),
                 waiting_for_decision: None,
                 orbs: vec![],
                 num_orb_slots: 1,
@@ -177,7 +203,7 @@ impl CombatState {
                     statuses: EnumMap::default(),
                 },
                 skip_next_duration_tick: EnumMap::default(),
-            },
+            }),
             enemies: vec![].into(),
 
             relic_state: run_info.relic_state,
@@ -254,7 +280,10 @@ impl CombatState {
                                 statuses: EnumMap::default(),
                             },
                             has_acted_this_turn: false,
-                            state_machine: EnemyStateMachine::default(),
+                            state_machine: EnemyStateMachine {
+                                current_state: 1,
+                                stunned: 0,
+                            },
                             has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
@@ -267,7 +296,10 @@ impl CombatState {
                                 statuses: EnumMap::default(),
                             },
                             has_acted_this_turn: false,
-                            state_machine: EnemyStateMachine::default(),
+                            state_machine: EnemyStateMachine {
+                                current_state: 2,
+                                stunned: 0,
+                            },
                             has_taken_unblocked_attack_damage_this_turn: false,
                         });
 
@@ -393,7 +425,7 @@ impl CombatState {
                 state
             }
             EncounterPrototype::Byrdonis => {
-                let hp = 91..=94;
+                let hp = 81..=84;
 
                 let state = state.flat_map_simple(|state| {
                     Distribution::equal_chance(hp.clone().map(|hp| {
@@ -626,9 +658,6 @@ impl CombatState {
                         .map(move |((a, b), c)| [(enemy_0.0, a), (enemy_1.0, b), (enemy_2.0, c)])
                 });
 
-                dbg!(state.len());
-                dbg!(typ_and_hp.clone().count());
-
                 let state = state.flat_map_simple(|state| {
                     Distribution::equal_chance(typ_and_hp.clone().map(|enemies| {
                         let mut state = state.clone();
@@ -675,10 +704,15 @@ impl CombatState {
                 state
             }),
             EncounterPrototype::TheKin => state.flat_map_simple(|mut state| {
-                let hp = (58..=59).cartesian_product(58..=59);
+                let hp = (58..=59)
+                    .cartesian_product(58..=59)
+                    .cartesian_product([false, true].into_iter());
 
-                Distribution::equal_chance(hp.map(|(first, second)| {
+                Distribution::equal_chance(hp.map(|((first, second), swap)| {
                     let mut state = state.clone();
+
+                    let mut follower = EnumMap::default();
+                    follower[Status::Minion] = 1;
 
                     state.enemies.add_enemy(Enemy {
                         prototype: EnemyPrototype::KinFollower,
@@ -686,7 +720,7 @@ impl CombatState {
                             hp: first,
                             max_hp: first,
                             block: 0,
-                            statuses: EnumMap::default(),
+                            statuses: follower.clone(),
                         },
                         has_acted_this_turn: false,
                         state_machine: EnemyStateMachine::default(),
@@ -699,7 +733,7 @@ impl CombatState {
                             hp: second,
                             max_hp: second,
                             block: 0,
-                            statuses: EnumMap::default(),
+                            statuses: follower,
                         },
                         has_acted_this_turn: false,
                         state_machine: EnemyStateMachine {
@@ -708,6 +742,10 @@ impl CombatState {
                         },
                         has_taken_unblocked_attack_damage_this_turn: false,
                     });
+
+                    if swap {
+                        state.enemies.enemies.rotate_left(1);
+                    }
 
                     state.enemies.add_enemy(Enemy {
                         prototype: EnemyPrototype::KinPriest,
@@ -744,9 +782,6 @@ impl CombatState {
                         .cartesian_product(enemy_1.1)
                         .map(move |(a, b)| [(enemy_0.0, a), (enemy_1.0, b)])
                 });
-
-                dbg!(state.len());
-                dbg!(typ_and_hp.clone().count());
 
                 let state = state.flat_map_simple(|state| {
                     Distribution::equal_chance(typ_and_hp.clone().map(|enemies| {
@@ -806,9 +841,6 @@ impl CombatState {
                         .map(move |((a, b), c)| [(enemy_0.0, a), (enemy_1.0, b), (enemy_2.0, c)])
                 });
 
-                dbg!(state.len());
-                dbg!(typ_and_hp.clone().count());
-
                 let state = state.flat_map_simple(|state| {
                     Distribution::equal_chance(typ_and_hp.clone().map(|enemies| {
                         let mut state = state.clone();
@@ -842,7 +874,24 @@ impl CombatState {
                 state
             }
             EncounterPrototype::SoloTunneler => {
-                todo!("Adaptive state machine intent logic (check if we lost all block")
+                let state = state.map(|mut state| {
+                    state.enemies.add_enemy(Enemy {
+                        prototype: EnemyPrototype::Tunneler,
+                        creature: Creature {
+                            hp: 87,
+                            max_hp: 87,
+                            block: 0,
+                            statuses: EnumMap::default(),
+                        },
+                        has_acted_this_turn: false,
+                        state_machine: EnemyStateMachine::default(),
+                        has_taken_unblocked_attack_damage_this_turn: false,
+                    });
+
+                    state
+                });
+
+                state
             }
             EncounterPrototype::LouseProgenitor => {
                 let hp = 134..=136;
@@ -1204,15 +1253,13 @@ impl CombatState {
                 state
             }),
             EncounterPrototype::SoulNexus => state.map(|mut state| {
-                let mut status = EnumMap::default();
-
                 state.enemies.add_enemy(Enemy {
-                    prototype: todo!(),
+                    prototype: EnemyPrototype::SoulNexus,
                     creature: Creature {
                         hp: 234,
                         max_hp: 234,
                         block: 0,
-                        statuses: status,
+                        statuses: EnumMap::default(),
                     },
                     has_acted_this_turn: false,
                     state_machine: EnemyStateMachine::default(),
@@ -1257,6 +1304,202 @@ impl CombatState {
 
                 state
             }),
+            EncounterPrototype::ConstructGang => state.map(|mut state| {
+                let mut arti = EnumMap::default();
+                arti[Status::Artifact] += 1;
+
+                state.enemies.add_enemy(Enemy {
+                    prototype: EnemyPrototype::PunchConstruct,
+                    creature: Creature {
+                        hp: 55,
+                        max_hp: 55,
+                        block: 0,
+                        statuses: arti,
+                    },
+                    has_acted_this_turn: false,
+                    state_machine: EnemyStateMachine::default(),
+                    has_taken_unblocked_attack_damage_this_turn: false,
+                });
+                state.enemies.add_enemy(Enemy {
+                    prototype: EnemyPrototype::CubexConstruct,
+                    creature: Creature {
+                        hp: 65,
+                        max_hp: 65,
+                        block: 0,
+                        statuses: arti,
+                    },
+                    has_acted_this_turn: false,
+                    state_machine: EnemyStateMachine::default(),
+                    has_taken_unblocked_attack_damage_this_turn: false,
+                });
+                state.enemies.add_enemy(Enemy {
+                    prototype: EnemyPrototype::CubexConstruct,
+                    creature: Creature {
+                        hp: 65,
+                        max_hp: 65,
+                        block: 0,
+                        statuses: arti,
+                    },
+                    has_acted_this_turn: false,
+                    state_machine: EnemyStateMachine::default(),
+                    has_taken_unblocked_attack_damage_this_turn: false,
+                });
+
+                state
+            }),
+            EncounterPrototype::Queen => state.map(|mut state| {
+                let mut minion = EnumMap::default();
+                minion[Status::Minion] += 1;
+
+                state.enemies.add_enemy(Enemy {
+                    prototype: EnemyPrototype::TorchHeadAmalgam,
+                    creature: Creature {
+                        hp: 199,
+                        max_hp: 199,
+                        block: 0,
+                        statuses: minion,
+                    },
+                    has_acted_this_turn: false,
+                    state_machine: EnemyStateMachine::default(),
+                    has_taken_unblocked_attack_damage_this_turn: false,
+                });
+                state.enemies.add_enemy(Enemy {
+                    prototype: EnemyPrototype::Queen,
+                    creature: Creature {
+                        hp: 400,
+                        max_hp: 400,
+                        block: 0,
+                        statuses: EnumMap::default(),
+                    },
+                    has_acted_this_turn: false,
+                    state_machine: EnemyStateMachine::default(),
+                    has_taken_unblocked_attack_damage_this_turn: false,
+                });
+
+                state
+            }),
+            EncounterPrototype::ExoskeletonWeak => {
+                let hps = iproduct!(24..=28, 24..=28, 24..=28).map(Into::into);
+
+                state.flat_map_simple(|state| {
+                    Distribution::equal_chance(hps.clone().map(|hps: [u16; 3]| {
+                        let mut state = state.clone();
+
+                        let mut exo = EnumMap::default();
+                        exo[Status::HardToKill] = 9;
+
+                        for (i, hp) in hps.into_iter().enumerate() {
+                            state.enemies.add_enemy(Enemy {
+                                prototype: EnemyPrototype::Exoskeleton,
+                                creature: Creature {
+                                    hp,
+                                    max_hp: hp,
+                                    block: 0,
+                                    statuses: exo,
+                                },
+                                has_acted_this_turn: false,
+                                state_machine: EnemyStateMachine {
+                                    stunned: 0,
+                                    current_state: i.try_into().unwrap(),
+                                },
+                                has_taken_unblocked_attack_damage_this_turn: false,
+                            });
+                        }
+
+                        state
+                    }))
+                })
+            }
+            EncounterPrototype::ExoskeletonStrong => {
+                let hps = iproduct!(24..=28, 24..=28, 24..=28, 24..=28)
+                    .map(Into::into)
+                    .cartesian_product([0, 1]);
+
+                state.flat_map_simple(|state| {
+                    Distribution::equal_chance(hps.clone().map(
+                        |(hps, fourth): ([u16; 4], usize)| {
+                            let mut state = state.clone();
+
+                            let mut exo = EnumMap::default();
+                            exo[Status::HardToKill] = 9;
+
+                            for (mut i, hp) in hps.into_iter().enumerate() {
+                                if i == 4 {
+                                    i = fourth;
+                                }
+
+                                state.enemies.add_enemy(Enemy {
+                                    prototype: EnemyPrototype::Exoskeleton,
+                                    creature: Creature {
+                                        hp,
+                                        max_hp: hp,
+                                        block: 0,
+                                        statuses: exo,
+                                    },
+                                    has_acted_this_turn: false,
+                                    state_machine: EnemyStateMachine {
+                                        stunned: 0,
+                                        current_state: i.try_into().unwrap(),
+                                    },
+                                    has_taken_unblocked_attack_damage_this_turn: false,
+                                });
+                            }
+
+                            state
+                        },
+                    ))
+                })
+            }
+            EncounterPrototype::Mytes => {
+                let hps = iproduct!(24..=28, 24..=28).map(Into::into);
+
+                state.flat_map_simple(|state| {
+                    Distribution::equal_chance(hps.clone().map(|hps: [u16; 2]| {
+                        let mut state = state.clone();
+
+                        for (i, hp) in hps.into_iter().enumerate() {
+                            state.enemies.add_enemy(Enemy {
+                                prototype: EnemyPrototype::Myte,
+                                creature: Creature {
+                                    hp,
+                                    max_hp: hp,
+                                    block: 0,
+                                    statuses: EnumMap::default(),
+                                },
+                                has_acted_this_turn: false,
+                                state_machine: EnemyStateMachine {
+                                    stunned: 0,
+                                    // Map 0 to 0 and 1 to 2
+                                    current_state: (i + i).try_into().unwrap(),
+                                },
+                                has_taken_unblocked_attack_damage_this_turn: false,
+                            });
+                        }
+
+                        state
+                    }))
+                })
+            }
+            EncounterPrototype::TestSubject => state.map(|mut state| {
+                let mut adaptable = EnumMap::default();
+                adaptable[Status::Adaptable] += 2;
+                adaptable[Status::Enrage] += 2;
+
+                state.enemies.add_enemy(Enemy {
+                    prototype: EnemyPrototype::TestSubject,
+                    creature: Creature {
+                        hp: 100,
+                        max_hp: 100,
+                        block: 0,
+                        statuses: adaptable,
+                    },
+                    has_acted_this_turn: false,
+                    state_machine: EnemyStateMachine::default(),
+                    has_taken_unblocked_attack_damage_this_turn: false,
+                });
+
+                state
+            }),
         };
 
         assert!(!state_with_enemy.is_empty());
@@ -1274,7 +1517,6 @@ impl CombatState {
         assert!(!state.is_empty(), "Did you adjust the max_hp filter???");
 
         assert!(state.all_unique());
-        dbg!(state.len());
 
         if run_info
             .relic_state
@@ -1294,7 +1536,6 @@ impl CombatState {
         // TODO: This means we instantiate #NumPossibleStartingHands GameStates.
         // This will likely blow up our RAM. Find a way to solve that
         let mut state: Distribution = state.flat_map_simple(Self::on_start_player_turn);
-        dbg!(state.len());
         assert!(!state.is_empty());
 
         // Innate cards
@@ -1315,9 +1556,7 @@ impl CombatState {
             state
         };
 
-        dbg!(state.len());
         state.dedup();
-        dbg!(state.len());
 
         if run_info
             .relic_state
@@ -1369,6 +1608,28 @@ impl CombatState {
             });
         }
 
+        if run_info.relic_state.contains(RelicPrototype::RedMask) {
+            state = state.flat_map_simple(|state| {
+                state.for_all_enemies(|state, enemy| {
+                    state.apply_status_change(CharacterIndex::Enemy(enemy), Status::Weak, 1)
+                })
+            });
+        }
+
+        if run_info.relic_state.contains(RelicPrototype::TwistedFunnel) {
+            state = state.flat_map_simple(|state| {
+                state.for_all_enemies(|state, enemy| {
+                    state.apply_status_change(CharacterIndex::Enemy(enemy), Status::Poison, 4)
+                })
+            });
+        }
+
+        if let Some(v) = run_info.relic_state.get_state(RelicPrototype::Girya) {
+            state = state.flat_map_simple(|state| {
+                state.apply_status_change(CharacterIndex::Player, Status::Strength, i16::from(v))
+            });
+        }
+
         if run_info.relic_state.contains(RelicPrototype::Bellows) {
             state = state.map(|mut state| {
                 state.player.hand.upgrade_all();
@@ -1379,9 +1640,7 @@ impl CombatState {
         // assert!(state.entries.iter().map(|(v, _)| v).all_unique());
         assert!(!state.is_empty());
 
-        dbg!(state.len());
         state.dedup();
-        dbg!(state.len());
 
         // assert!(state.entries.iter().map(|(v, _)| v).all_unique());
 

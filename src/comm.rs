@@ -65,27 +65,29 @@ impl Comm {
                 )
             });
 
-        let encounter_and_matchscore =
-            options.map(|(encounter, dis)| {
-                (
-                    encounter,
-                    dis.map(move |state| {
-                        if enemies_ref.iter().all(|real| {
+        let encounter_and_matchscore = options.map(|(encounter, dis)| {
+            (
+                encounter,
+                dis.map(move |state| {
+                    if enemies_ref.len() == state.enemies.iter().count()
+                        && enemies_ref.iter().all(|real| {
                             state
                                 .enemies
                                 .iter()
                                 .any(|enemy| enemy.prototype == real.kind)
-                        }) && state.enemies.iter().all(|enemy| {
+                        })
+                        && state.enemies.iter().all(|enemy| {
                             enemies_ref.iter().any(|real| real.kind == enemy.prototype)
-                        }) {
-                            1.0
-                        } else {
-                            0.0
-                        }
-                    })
-                    .expected_value(),
-                )
-            });
+                        })
+                    {
+                        1.0
+                    } else {
+                        0.0
+                    }
+                })
+                .expected_value(),
+            )
+        });
 
         encounter_and_matchscore
             .max_by(|(_, a), (_, b)| a.total_cmp(b))
@@ -108,7 +110,19 @@ impl Comm {
                     enchantment: card.enchantment,
                 })
                 .collect(),
-            relic_state: [RingOfTheSnake].into_iter().collect(),
+            relic_state: [
+                RingOfTheSnake,
+                Vajra,
+                OddlySmoothStone,
+                MeatOnTheBone,
+                HornCleat,
+                MrStruggles,
+                BagOfMarbles,
+                Candelabra,
+                Sai,
+            ]
+            .into_iter()
+            .collect(),
         }
     }
 
@@ -124,13 +138,6 @@ impl Comm {
             // let mut options = is_single_choice(options)?;
             println!("Start: {}", options.len());
 
-            let hand = comm.hand();
-            options.retain(|state| state.player.hand.satisfies(&hand));
-            if options.is_empty() {
-                dbg!(&hand);
-            }
-            println!("Post hand: {}", options.len());
-
             let player_hp = comm.get_hp();
             options.retain(|state| state.player.creature.hp == player_hp);
             println!("Post player hp: {}", options.len());
@@ -140,6 +147,25 @@ impl Comm {
             options.retain(|state| state.player.creature.block == player_block);
             println!("Post player block: {}", options.len());
             // let mut options = is_single_choice(options)?;
+
+            let player = comm.get_player_info();
+            options.retain(|state| player.satisfies(&state.player));
+            if options.is_empty() {
+                dbg!(player);
+            }
+            println!("Post statuses: {}", options.len());
+
+            let hand = comm.hand();
+            options.retain(|state| {
+                state
+                    .player
+                    .hand
+                    .satisfies(&hand, state.player.creature.statuses[Status::Dampen] > 0)
+            });
+            if options.is_empty() {
+                dbg!(&hand);
+            }
+            println!("Post hand: {}", options.len());
 
             let enemies = comm.enemies();
             // FIXME: DEBUG
@@ -167,13 +193,18 @@ impl Comm {
                             .collect_vec()
                     })
                     .collect_vec();
-                // dbg!(&intents);
+                dbg!(&intents);
             }
             println!("Post enemies: {}", options.len());
             // let mut options = is_single_choice(options)?;
 
             let draw_pile = comm.draw_pile();
-            options.retain(|state| state.player.draw_pile.satisfies(&draw_pile));
+            options.retain(|state| {
+                state.player.draw_pile.satisfies(
+                    &draw_pile,
+                    state.player.creature.statuses[Status::Dampen] > 0,
+                )
+            });
             if options.is_empty() {
                 dbg!(&draw_pile);
             }
@@ -188,13 +219,6 @@ impl Comm {
             // println!("Post Discard pile: {}", options.len());
 
             // TODO: Other piles (draw/discard/exhaust)
-
-            let player = comm.get_player_info();
-            options.retain(|state| player.satisfies(&state.player));
-            if options.is_empty() {
-                dbg!(player);
-            }
-            println!("Post statuses: {}", options.len());
 
             let remaining_options = is_single_choice(options)?;
             dbg!(remaining_options);
@@ -304,18 +328,22 @@ enum IntentInfo {
 impl EnemyInfo {
     fn satisfies(&self, enemy: &Enemy) -> bool {
         if enemy.prototype != self.kind {
+            dbg!(enemy.prototype != self.kind);
             return false;
         }
 
         if enemy.creature.hp != self.current_hp {
+            dbg!(enemy.creature.hp != self.current_hp);
             return false;
         }
 
         if enemy.creature.max_hp != self.max_hp {
+            dbg!(enemy.creature.max_hp != self.max_hp);
             return false;
         }
 
         if enemy.creature.block != self.block {
+            dbg!(enemy.creature.block != self.block);
             return false;
         }
 
@@ -329,6 +357,7 @@ impl EnemyInfo {
         });
 
         if !all_real_present {
+            dbg!(!all_real_present);
             return false;
         }
 
@@ -342,6 +371,7 @@ impl EnemyInfo {
         });
 
         if !all_sim_present {
+            dbg!(!all_sim_present);
             return false;
         }
 
@@ -372,6 +402,10 @@ impl EnemyInfo {
                 self.intent.contains(&IntentInfo::Defend {})
             }
             crate::combat_state::EnemyAction::ApplyStatusSelf { diff, .. } => {
+                // Some enemies remove buffs from themselves. This is not communicated via the intent system (i.e. Spiny Toad removing its own Thorns)
+                *diff <= 0 || self.intent.contains(&IntentInfo::Buff {})
+            }
+            crate::combat_state::EnemyAction::ApplyStatusTeammate { diff, .. } => {
                 // Some enemies remove buffs from themselves. This is not communicated via the intent system (i.e. Spiny Toad removing its own Thorns)
                 *diff <= 0 || self.intent.contains(&IntentInfo::Buff {})
             }
@@ -451,14 +485,15 @@ struct CardState {
 }
 
 impl UnorderedCardSet {
-    fn satisfies(&self, cards: &[CardInfo]) -> bool {
+    fn satisfies(&self, cards: &[CardInfo], dampen: bool) -> bool {
         let counts: std::collections::HashMap<(CardPrototype, bool), usize> =
             cards.iter().map(|card| (card.kind, card.upgraded)).counts();
         let state_counts: std::collections::HashMap<(CardPrototype, bool), usize> = self
             .cards
             .iter()
             .filter_map(|(card, count)| {
-                (*count > 0).then_some(((card.prototype, card.upgraded), *count as usize))
+                (*count > 0)
+                    .then_some(((card.prototype, !dampen && card.upgraded), *count as usize))
             })
             .collect();
 
@@ -642,6 +677,12 @@ impl RCONComm {
     }
 
     fn apply_action(&mut self, action: CombatAction) {
+        let dampen = self
+            .get_player_info()
+            .powers
+            .iter()
+            .any(|power| power.0 == Status::Dampen);
+
         let command = match action {
             CombatAction::PlayCard { card, target } => {
                 let hand = self.hand();
@@ -650,7 +691,7 @@ impl RCONComm {
                     .iter()
                     .position(|info| {
                         info.kind == card.prototype
-                            && info.upgraded == card.upgraded
+                            && info.upgraded == (!dampen && card.upgraded)
                             && info.enchantment == card.enchantment
                     })
                     .unwrap_or_else(|| panic!("Could not find card {card:?} in game hand"));
@@ -668,7 +709,7 @@ impl RCONComm {
                     .iter()
                     .position(|info| {
                         info.kind == card.prototype
-                            && info.upgraded == card.upgraded
+                            && info.upgraded == (!dampen && card.upgraded)
                             && info.enchantment == card.enchantment
                     })
                     .unwrap_or_else(|| panic!("Could not find card {card:?} in game hand"));

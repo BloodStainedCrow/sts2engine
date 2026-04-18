@@ -836,7 +836,7 @@ mod test {
     fn ensure_focus_is_preferred() {
         let spread = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
-            player: Player::default(),
+            player: Box::new(Player::default()),
             current_turn_side: combat_state::CombatSide::Player,
             enemies: vec![
                 Enemy {
@@ -875,7 +875,7 @@ mod test {
         });
         let focus = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
-            player: Player::default(),
+            player: Box::new(Player::default()),
             current_turn_side: combat_state::CombatSide::Player,
             enemies: vec![
                 Enemy {
@@ -918,7 +918,7 @@ mod test {
 
         let spread = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
-            player: Player::default(),
+            player: Box::new(Player::default()),
             current_turn_side: combat_state::CombatSide::Player,
             enemies: vec![
                 Enemy {
@@ -957,7 +957,7 @@ mod test {
         });
         let focus = TestEngineCurrentHp {}.expected_evaluation(&CombatState {
             turn_counter: 0,
-            player: Player::default(),
+            player: Box::new(Player::default()),
             current_turn_side: combat_state::CombatSide::Player,
             enemies: vec![
                 Enemy {
@@ -1004,7 +1004,7 @@ mod test {
 
         let state = CombatState {
             turn_counter: 0,
-            player: Player::default(),
+            player: Box::new(Player::default()),
             current_turn_side: combat_state::CombatSide::Player,
             enemies: vec![
                 Enemy {

@@ -634,6 +634,7 @@ dependencies = [
  "rapidhash",
  "rayon",
  "smallvec",
+ "totally-ordered",
 ]
 
 [[package]]
@@ -681,6 +682,12 @@ checksum = "31d42176308937165701f50638db1c31586f183f1aab416268216577aec7306b"
 dependencies = [
  "chrono",
 ]
+
+[[package]]
+name = "totally-ordered"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fae71db48bb7a5a1ffd2c5d32a398a5f5f264dc570dda86e6604ff0eb78ae21"
 
 [[package]]
 name = "unicode-ident"

@@ -1,4 +1,4 @@
-use rand::{random_range, rng, seq::IteratorRandom};
+use rand::{Rng, RngExt, SeedableRng, random_range, rng, rngs::SmallRng, seq::IteratorRandom};
 use std::{
     cmp::Ordering,
     hash::Hash,
@@ -23,6 +23,27 @@ impl<Value> Distribution<Distribution<Value>> {
     }
 }
 
+fn choose_weighted<T, R, F, I>(items: I, weight_fn: F, rng: &mut R) -> Option<T>
+where
+    R: Rng + ?Sized,
+    I: IntoIterator<Item = T>,
+    F: Fn(&T) -> usize,
+{
+    let mut items = items.into_iter();
+
+    let mut result = items.next()?;
+    let mut sum = weight_fn(&result);
+
+    for item in items {
+        let weight = weight_fn(&item);
+        sum += weight;
+        if rng.random_range(0..sum) < weight {
+            result = item;
+        }
+    }
+    Some(result)
+}
+
 impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
     const IS_SIZE_SENSITIVE: bool = false;
 
@@ -44,23 +65,28 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
     fn from_duplicates(values: impl IntoIterator<Item = (Value, usize)>) -> Self {
         // TODO: Avoid collecting here
         // TODO: Maybe just dont allocate the values? Indices would be much smaller?
-        let entries: Vec<(Value, _)> = values.into_iter().collect();
+        // let entries: Vec<(Value, _)> = values.into_iter().collect();
 
-        let sum = entries.iter().map(|v| v.1).sum();
+        // let sum = entries.iter().map(|v| v.1).sum();
 
-        let mut v = random_range(0..sum);
+        // let mut v = random_range(0..sum);
 
-        let entry = entries
-            .into_iter()
-            .find(|(_value, count)| {
-                if count >= &v {
-                    true
-                } else {
-                    v -= count;
-                    false
-                }
-            })
-            .expect("The range is the sum");
+        // let entry = entries
+        //     .into_iter()
+        //     .find(|(_value, count)| {
+        //         if count >= &v {
+        //             true
+        //         } else {
+        //             v -= count;
+        //             false
+        //         }
+        //     })
+        //     .expect("The range is the sum");
+
+        // TODO: Test if we can somehow use SmallRng since the calls to ThreadRng are significant in my profiles
+        //       Especially since we do *not* need any sort of security.
+        let entry = choose_weighted(values, |(_value, weight)| *weight, &mut rng())
+            .expect("At least one option needed for from_duplicates");
 
         Self { value: entry.0 }
     }

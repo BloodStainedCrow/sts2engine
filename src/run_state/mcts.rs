@@ -7,8 +7,8 @@ impl mcts::GameState for RunState {
 
     type Eval = crate::mcts::Eval;
 
-    fn legal_actions(&self) -> (usize, impl Iterator<Item = Self::Action>) {
-        (todo!(), vec![todo!()].into_iter())
+    fn legal_actions(&self) -> impl Iterator<Item = Self::Action> {
+        vec![todo!()].into_iter()
     }
 
     fn rollout_action(&self) -> Self::Action {

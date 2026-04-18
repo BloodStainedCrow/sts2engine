@@ -1,4 +1,5 @@
 use std::cmp::{max, min};
+use std::fmt::Debug;
 use std::iter;
 
 use enum_map::{Enum, EnumMap};
@@ -17,7 +18,7 @@ pub(crate) mod cards;
 pub(crate) mod encounter;
 pub(crate) mod relics;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CombatSide {
     Player,
     Enemies,
@@ -29,7 +30,9 @@ pub struct CombatState {
     pub turn_counter: u8,
     pub current_turn_side: CombatSide,
 
-    pub player: Player,
+    // TODO(BSC): The Player is boxed here, since Player is a very large struct and since we are moving CombatState by value a lot, (and copy elision is not always happening) it results in tons of memcpy calls
+    //            Provide a proper benchmark comparing this. Since pointer chasing to get Player fields is also quite suboptimal
+    pub player: Box<Player>,
 
     pub enemies: EnemyList,
 
@@ -53,6 +56,7 @@ impl EnemyList {
         self.enemies.iter_mut().flat_map(|slot| {
             if let Some(enemy) = slot
                 && enemy.creature.hp == 0
+                && enemy.creature.statuses[Status::Adaptable] == 0
             {
                 slot.take()
             } else {
@@ -61,7 +65,7 @@ impl EnemyList {
         })
     }
 
-    fn all_alive_enemy_indices(&self) -> impl Iterator<Item = EnemyIndex> {
+    fn all_alive_enemy_indices(&self) -> impl Iterator<Item = EnemyIndex> + Debug {
         self.enemies
             .iter()
             .enumerate()
@@ -87,6 +91,10 @@ impl EnemyList {
 
     pub fn iter(&self) -> impl Iterator<Item = &Enemy> {
         self.enemies.iter().flatten()
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut Enemy> {
+        self.enemies.iter_mut().flatten()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -135,6 +143,7 @@ impl Hash for CombatState {
         // TODO: The turn counter does not matter (for now)
         // TODO: Test if that increases the transposition hit rate
         self.turn_counter.hash(state);
+        self.current_turn_side.hash(state);
         self.player.hash(state);
         self.enemies.hash(state);
         self.relic_state.hash(state);
@@ -163,6 +172,7 @@ enum CharacterIndex {
 }
 
 // TODO:
+#[derive(Debug, Clone)]
 pub struct RunInfo {
     pub hp: u16,
     pub max_hp: u16,
@@ -229,6 +239,20 @@ impl CombatState {
         impl Iterator<Item = CombatAction> + use<'_>,
         impl Iterator<Item = CombatAction> + use<'_>,
     > {
+        // End turn is only legal when the return value is Either::Left
+        match self.legal_actions_without_turn_end() {
+            Either::Left(v) => Either::Left(v.chain(iter::once(CombatAction::EndTurn))),
+            Either::Right(v) => Either::Right(v),
+        }
+    }
+
+    #[inline(never)]
+    pub(crate) fn legal_actions_without_turn_end(
+        &self,
+    ) -> Either<
+        impl Iterator<Item = CombatAction> + use<'_>,
+        impl Iterator<Item = CombatAction> + use<'_>,
+    > {
         if let Some(required) = &self.player.waiting_for_decision {
             match required {
                 RequiredPlayerDecision::ChooseCardInHand { filter, action: _ } => {
@@ -236,9 +260,8 @@ impl CombatState {
                         self.player
                             .hand
                             .iter()
-                            .enumerate()
-                            .filter(|(_, card)| (filter)(**card))
-                            .map(|(index, card)| CombatAction::Choice { card: *card }),
+                            .filter(|card| filter.matches(**card))
+                            .map(|card| CombatAction::Choice { card: *card }),
                     );
                 }
             }
@@ -249,9 +272,12 @@ impl CombatState {
             self.player
                 .hand
                 .iter()
-                .enumerate()
-                .filter(|(_, card)| !card.has_unplayable())
-                .filter(|(_, card)| {
+                .copied()
+                .filter(|card| {
+                    if card.has_unplayable() {
+                        return false;
+                    }
+
                     if Some(4) == self.relic_state.get_state(RelicPrototype::BrilliantScarf) {
                         return true;
                     }
@@ -266,65 +292,24 @@ impl CombatState {
                         }
                     }
                 })
-                .flat_map(move |(card_index, card)| {
-                    card.get_legal_targets()
-                        .flat_map(move |target| match target {
-                            LegalTarget::OwnPlayer => {
-                                Either::Left(std::iter::once(CombatAction::PlayCard {
-                                    card: *card,
-                                    target: None,
-                                }))
-                            }
-                            LegalTarget::OtherPlayer => todo!(),
-                            LegalTarget::Enemy => {
-                                Either::Right(self.enemies.all_alive_enemy_indices().map(
-                                    |enemy_index| CombatAction::PlayCard {
-                                        card: *card,
-                                        target: Some(
-                                            self.enemies.internal_to_external_index(enemy_index),
-                                        ),
-                                    },
-                                ))
-                            }
-                        })
-                })
-                // TODO(BSC): test whether limiting the end turn button improves the performance/playing strength of the engine
-                .chain(std::iter::once(CombatAction::EndTurn)),
+                .flat_map(move |card| match card.get_legal_targets() {
+                    LegalTarget::OwnPlayer => {
+                        Either::Left(std::iter::once(CombatAction::PlayCard {
+                            card,
+                            target: None,
+                        }))
+                    }
+                    LegalTarget::OtherPlayer => todo!(),
+                    LegalTarget::Enemy => {
+                        Either::Right(self.enemies.all_alive_enemy_indices().map(
+                            move |enemy_index| CombatAction::PlayCard {
+                                card,
+                                target: Some(self.enemies.internal_to_external_index(enemy_index)),
+                            },
+                        ))
+                    }
+                }),
         )
-        // .chain(std::iter::repeat_n(
-        //     CombatAction::EndTurn,
-        //     // TODO: This is technically not correct. But it should drastically increase the speed of the engine
-        //     // Only allow ending turn when no cards can be played
-        //     usize::from(
-        //         // Allow keeping cards if we retain at end of turn
-        //         self.player.creature.statuses[Status::RetainHand] > 0
-        //             // Allow not playing cards against Mr Beees
-        //             || self.enemies.iter().any(|enemy| enemy.creature.statuses[Status::PersonalHive] > 0)
-        //             // Allow not playing cards when an enemy has thorns
-        //             || self.enemies.iter().any(|enemy| enemy.creature.statuses[Status::Thorns] > 0)
-        //             || !self
-        //                 .player
-        //                 .hand
-        //                 .iter()
-        //                 .filter(|card| !card.has_unplayable())
-        //                 .filter(|card| !card.has_exhaust())
-        //                 .filter(|card| !card.has_ethereal())
-        //                 .any(|card| {
-        //                     let cost = card.get_cost();
-        //                     let can_afford = match (cost.energy, cost.stars) {
-        //                         (CostVal::X, CostVal::X) => todo!(),
-        //                         (CostVal::X, CostVal::Val(cost)) => self.player.stars >= cost,
-        //                         (CostVal::Val(cost), CostVal::X) => self.player.energy >= cost,
-        //                         (CostVal::Val(energy), CostVal::Val(stars)) => {
-        //                             self.player.energy >= energy && self.player.stars >= stars
-        //                         }
-        //                     };
-
-        //                     // TODO: Ignore exhausting cards here, to allow not playing those when not needed
-        //                     can_afford
-        //                 }),
-        //     ),
-        // )))
     }
 
     pub(crate) fn apply<
@@ -771,13 +756,23 @@ impl CombatState {
             self.player.creature.block += 6;
         }
 
+        if Some(0) == self.relic_state.get_state(RelicPrototype::RippleBasin) {
+            self.player.creature.block += 4;
+        }
+
+        self.relic_state
+            .set_state_if_present(RelicPrototype::RippleBasin, 0);
         self.relic_state
             .set_state_if_present(RelicPrototype::Shuriken, 0);
+        self.relic_state
+            .set_state_if_present(RelicPrototype::Kusarigama, 0);
+        self.relic_state
+            .set_state_if_present(RelicPrototype::LetterOpener, 0);
 
         self.player.creature.block += u16::try_from(self.player.creature.statuses[Status::Plating])
             .expect("Plating cannot be negative");
 
-        // TODO: Handle Etheral and Cards with "if in hand at end of turn"
+        // TODO: Handle Cards with "if in hand at end of turn"
         // FIXME: Triggers not accounted for
         for (card, count) in self.player.hand.iter_counts() {
             match card.prototype {
@@ -793,6 +788,15 @@ impl CombatState {
                 CardPrototype::Infection => {
                     for _ in 0..count {
                         let damage = 3;
+                        let block_damage = min(self.player.creature.block, damage);
+                        let unblocked = damage.saturating_sub(self.player.creature.block);
+                        self.player.creature.block -= block_damage;
+                        self.player.creature.hp = self.player.creature.hp.saturating_sub(unblocked);
+                    }
+                }
+                CardPrototype::Toxic => {
+                    for _ in 0..count {
+                        let damage = 5;
                         let block_damage = min(self.player.creature.block, damage);
                         let unblocked = damage.saturating_sub(self.player.creature.block);
                         self.player.creature.block -= block_damage;
@@ -816,46 +820,30 @@ impl CombatState {
 
         if self.player.creature.statuses[Status::RetainHand] > 0 {
             self.player.creature.statuses[Status::RetainHand] -= 1;
-        } else {
-            self.player.discard_pile.append(&mut self.player.hand);
-        }
-
-        let mut status_diff: EnumMap<Status, i16> = EnumMap::default();
-        for (status, count) in &mut self.player.creature.statuses {
-            match status {
-                Status::CorrosiveWave => {
-                    *count = 0;
+        } else if !self.relic_state.contains(RelicPrototype::RunicPyramid) {
+            // TODO: Make this smarter
+            for non_retain in self.player.hand.extract_if(|card| !card.has_retain()) {
+                for _ in 0..non_retain.1 {
+                    self.player.discard_pile.add_card(non_retain.0);
                 }
-                Status::Territorial => {
-                    status_diff[Status::Strength] += *count;
-                }
-                Status::Anticipate => {
-                    status_diff[Status::Dexterity] -= *count;
-                    *count = 0;
-                }
-                Status::Burst => {
-                    *count = 0;
-                }
-                Status::Shadowmeld => {
-                    *count = 0;
-                }
-                Status::Ritual => {
-                    status_diff[Status::Strength] += *count;
-                }
-
-                _ => {}
             }
         }
 
-        for (v, count) in self
-            .player
-            .creature
-            .statuses
-            .values_mut()
-            .zip(status_diff.into_values())
-        {
-            *v += count;
-        }
+        self.player.creature.statuses[Status::CorrosiveWave] = 0;
+
+        self.player.creature.statuses[Status::Strength] +=
+            self.player.creature.statuses[Status::Territorial];
+
+        self.player.creature.statuses[Status::Strength] +=
+            self.player.creature.statuses[Status::Ritual];
+
+        self.player.creature.statuses[Status::Dexterity] -=
+            self.player.creature.statuses[Status::Anticipate];
+        self.player.creature.statuses[Status::Anticipate] = 0;
+
+        self.player.creature.statuses[Status::Burst] = 0;
+
+        self.player.creature.statuses[Status::Shadowmeld] = 0;
 
         let state =
             if self.turn_counter == 7 && self.relic_state.contains(RelicPrototype::StoneCalendar) {
@@ -866,7 +854,17 @@ impl CombatState {
                 Distribution::single_value(self)
             };
 
-        state
+        state.flat_map_simple(|state| {
+            if state.relic_state.contains(RelicPrototype::ParryingShield)
+                && state.player.creature.block >= 10
+            {
+                state.get_random_enemy_equal_chance(|state, enemy| {
+                    state.apply_unsourced_damage(6, CharacterIndex::Enemy(enemy))
+                })
+            } else {
+                Distribution::single_value(state)
+            }
+        })
     }
 
     fn on_start_enemy_turn<
@@ -881,13 +879,24 @@ impl CombatState {
                 return Distribution::single_value(state);
             };
 
-            enemy.creature.block = 0;
+            if enemy.creature.statuses[Status::Burrowed] > 0 {
+                // Burrowed does not lose block
+            } else {
+                enemy.creature.block = 0;
+            }
 
             let mut poison_dmg = enemy.creature.statuses[Status::Poison];
 
-            if poison_dmg > 0 && enemy.creature.statuses[Status::Slippery] > 0 {
+            if poison_dmg > 0
+                && (enemy.creature.statuses[Status::Slippery] > 0
+                    || enemy.creature.statuses[Status::Intangible] > 0)
+            {
                 poison_dmg = 1;
                 enemy.creature.statuses[Status::Slippery] -= 1;
+            }
+
+            if enemy.creature.statuses[Status::HardToKill] > 0 {
+                poison_dmg = poison_dmg.min(enemy.creature.statuses[Status::HardToKill]);
             }
 
             enemy.creature.hp = enemy.creature.hp.saturating_sub_signed(poison_dmg);
@@ -906,6 +915,15 @@ impl CombatState {
                 }
             }
             decrease_non_neg(&mut enemy.creature.statuses[Status::Poison]);
+            decrease_non_neg(&mut enemy.creature.statuses[Status::Intangible]);
+            if enemy.creature.statuses[Status::Nemesis] > 0 {
+                if enemy.creature.statuses[Status::Nemesis] == 2 {
+                    enemy.creature.statuses[Status::Nemesis] = 1;
+                    enemy.creature.statuses[Status::Intangible] += 1;
+                } else {
+                    enemy.creature.statuses[Status::Nemesis] += 1;
+                }
+            }
 
             enemy.creature.block += u16::try_from(enemy.creature.statuses[Status::Plating])
                 .expect("Plating cannot be negative");
@@ -975,6 +993,22 @@ impl CombatState {
                             )
                         })
                     }
+                    EnemyAction::ApplyStatusTeammate { status, diff } => {
+                        state.flat_map_simple(|state| {
+                            let teammate = state
+                                .enemies
+                                .all_alive_enemy_indices()
+                                .filter(|teammate_index| *teammate_index != enemy_index)
+                                .exactly_one()
+                                .expect("Could not find teammate for teammate move!");
+
+                            state.apply_status_change(
+                                CharacterIndex::Enemy(teammate),
+                                *status,
+                                *diff,
+                            )
+                        })
+                    }
                     EnemyAction::ApplyStatusPlayer { status, diff } => {
                         state.flat_map_simple(|state| {
                             state.apply_status_change(CharacterIndex::Player, *status, *diff)
@@ -1032,27 +1066,24 @@ impl CombatState {
         })
     }
 
+    fn decrease_if_not_skipped(player: &mut Player, status: Status) {
+        if player.skip_next_duration_tick[status] {
+            player.skip_next_duration_tick[status] = false;
+        } else {
+            decrease_non_neg(&mut player.creature.statuses[status]);
+        }
+    }
+
     fn on_end_enemy_turn<
         Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         mut self,
     ) -> Distribution {
-        for (status, count) in &mut self.player.creature.statuses {
-            if self.player.skip_next_duration_tick[status] {
-                self.player.skip_next_duration_tick[status] = false;
-                continue;
-            }
+        Self::decrease_if_not_skipped(&mut self.player, Status::Vulnerable);
+        Self::decrease_if_not_skipped(&mut self.player, Status::Weak);
+        Self::decrease_if_not_skipped(&mut self.player, Status::Frail);
 
-            match status {
-                Status::Vulnerable => decrease_non_neg(count),
-                Status::Weak => decrease_non_neg(count),
-                Status::Frail => decrease_non_neg(count),
-
-                _ => {}
-            }
-        }
-
-        self.for_all_enemies(|mut state, enemy| {
+        let state = self.for_all_enemies(|mut state, enemy| {
             let Some(enemy) = state.enemies.get_mut(enemy) else {
                 return Distribution::single_value(state);
             };
@@ -1095,6 +1126,39 @@ impl CombatState {
             }
 
             Distribution::single_value(state)
+        });
+
+        state.map(|mut state| {
+            if let Some(enemy) = state.enemies.iter_mut().find(|enemy| {
+                enemy.creature.hp == 0 && enemy.creature.statuses[Status::Adaptable] > 0
+            }) {
+                match enemy.prototype {
+                    EnemyPrototype::TestSubject => {
+                        match enemy.creature.statuses[Status::Adaptable] {
+                            1 => {
+                                enemy.creature.max_hp = 200;
+                                enemy.creature.hp = 200;
+                                enemy.creature.statuses = EnumMap::default();
+                                enemy.creature.statuses[Status::PainfulStabs] = 1;
+                                enemy.creature.statuses[Status::Adaptable] = 1;
+                                enemy.state_machine.current_state = 2;
+                            }
+                            0 => {
+                                enemy.creature.max_hp = 300;
+                                enemy.creature.hp = 300;
+                                enemy.creature.statuses = EnumMap::default();
+                                enemy.creature.statuses[Status::Nemesis] = 1;
+                                // FIXME: I think this value is incorrect
+                                enemy.state_machine.current_state = 3;
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    _ => unreachable!("No other enemy gets adaptable currently"),
+                }
+            }
+
+            state
         })
     }
 
@@ -1129,7 +1193,22 @@ impl CombatState {
 
         // Give Player Energy
         // FIXME: Calculate the amount of energy to give
-        self.player.energy = 3;
+        if self.relic_state.contains(RelicPrototype::IceCream) {
+            self.player.energy += 3;
+        } else {
+            self.player.energy = 3;
+        }
+
+        if let Some(v) = self.relic_state.get_state(RelicPrototype::HappyFlower) {
+            if v == 2 {
+                self.relic_state
+                    .set_state_if_present(RelicPrototype::HappyFlower, 0);
+                self.player.energy += 1;
+            } else {
+                self.relic_state
+                    .set_state_if_present(RelicPrototype::HappyFlower, v + 1);
+            }
+        }
 
         // Remove player block
         if self.player.creature.statuses[Status::Blur] > 0 {
@@ -1176,17 +1255,10 @@ impl CombatState {
 
         // If Mayhem plays dodge and roll, the block next turn does not trigger instantly
         state = state.map(|mut state| {
-            for (status, count) in &mut state.player.creature.statuses {
-                match status {
-                    Status::BlockNextTurn => {
-                        state.player.creature.block +=
-                            u16::try_from(*count).expect("BlockNextTurn must be positive");
-                        *count = 0;
-                    }
-
-                    _ => {}
-                }
-            }
+            state.player.creature.block +=
+                u16::try_from(state.player.creature.statuses[Status::BlockNextTurn])
+                    .expect("BlockNextTurn must be positive");
+            state.player.creature.statuses[Status::BlockNextTurn] = 0;
             state
         });
 
@@ -1266,13 +1338,51 @@ impl CombatState {
         });
 
         let state = state.map(|mut state| {
-            if state.turn_counter == 1 && (state.relic_state.contains(RelicPrototype::Lantern)) {
+            if state.turn_counter == 1 && state.relic_state.contains(RelicPrototype::Lantern) {
                 state.player.energy += 1;
+            }
+            if state.turn_counter == 1 && state.relic_state.contains(RelicPrototype::VeryHotCocoa) {
+                state.player.energy += 4;
+            } else if state.turn_counter == 2
+                && (state.relic_state.contains(RelicPrototype::Candelabra))
+            {
+                state.player.energy += 2;
+            } else if state.turn_counter == 3
+                && (state.relic_state.contains(RelicPrototype::Chandelier))
+            {
+                state.player.energy += 3;
+            }
+
+            state
+        });
+
+        let state = state.map(|mut state| {
+            if state.turn_counter == 3
+                && (state.relic_state.contains(RelicPrototype::SparklingRouge))
+            {
+                state.player.creature.statuses[Status::Dexterity] += 1;
+                state.player.creature.statuses[Status::Strength] += 1;
             }
             state
         });
 
-        state.flat_map_simple(|state| {
+        let state = state.map(|mut state| {
+            if state.turn_counter == 2 && (state.relic_state.contains(RelicPrototype::HornCleat)) {
+                // TODO: Triggers
+                state.player.creature.block += 14;
+            }
+            state
+        });
+
+        let mut state = state.map(|mut state| {
+            if state.relic_state.contains(RelicPrototype::Sai) {
+                // TODO: Triggers
+                state.player.creature.block += 7;
+            }
+            state
+        });
+
+        state = state.flat_map_simple(|state| {
             if state.relic_state.contains(RelicPrototype::MrStruggles) {
                 state.for_all_enemies(|state, index| {
                     let turn = state.turn_counter.into();
@@ -1281,6 +1391,21 @@ impl CombatState {
             } else {
                 Distribution::single_value(state)
             }
+        });
+
+        state = state.flat_map_simple(|state| {
+            if state.relic_state.contains(RelicPrototype::MercuryHourglass) {
+                state.for_all_enemies(|state, index| {
+                    state.apply_unsourced_damage(3, CharacterIndex::Enemy(index))
+                })
+            } else {
+                Distribution::single_value(state)
+            }
+        });
+
+        state.map(|mut state| {
+            decrease_non_neg(&mut state.player.creature.statuses[Status::Intangible]);
+            state
         })
     }
 
@@ -1337,7 +1462,7 @@ impl CombatState {
         Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution>,
     >(
         self,
-        mut card: Card,
+        card: Card,
         target: Target,
         is_raw_play: bool,
     ) -> Distribution {
@@ -1350,17 +1475,17 @@ impl CombatState {
                 Distribution::Inner::<(Self, Option<EnemyIndex>)>::single_value((self, v))
             }
             Target::Random => Distribution::Inner::<(Self, Option<EnemyIndex>)>::equal_chance(
-                card.get_legal_targets()
-                    .flat_map(|target| match target {
-                        LegalTarget::OwnPlayer => vec![None],
-                        LegalTarget::OtherPlayer => todo!(),
-                        LegalTarget::Enemy => self
-                            .enemies
-                            .all_alive_enemy_indices()
-                            .map(Option::Some)
-                            .collect(),
-                    })
-                    .map(|target| (self.clone(), target)),
+                match card.get_legal_targets() {
+                    LegalTarget::OwnPlayer => vec![None],
+                    LegalTarget::OtherPlayer => todo!(),
+                    LegalTarget::Enemy => self
+                        .enemies
+                        .all_alive_enemy_indices()
+                        .map(Option::Some)
+                        .collect(),
+                }
+                .into_iter()
+                .map(|target| (self.clone(), target)),
             ),
         };
 
@@ -1387,7 +1512,7 @@ impl CombatState {
         // });
 
         let state: Distribution = state.flat_map::<Self>(|(state, target)| {
-            let mut card = card.clone();
+            let mut card = card;
             if state.player.creature.statuses[Status::Dampen] > 0 {
                 card.upgraded = false;
             }
@@ -1402,8 +1527,49 @@ impl CombatState {
                 CardPrototype::Burn => unreachable!("Burn is unplayable"),
                 CardPrototype::Soot => unreachable!("Soot is unplayable"),
                 CardPrototype::SpoilsMap => unreachable!("SpoilsMap is unplayable"),
+                CardPrototype::Toxic => state,
                 CardPrototype::Slimed => state.flat_map_simple(Self::draw_single_card),
                 CardPrototype::Strike => {
+                    let target = target.unwrap();
+                    let base_amount =
+                        if card.upgraded { 9 } else { 6 } + card.enchantment.get_bonus_damage();
+
+                    state.flat_map_simple(|state| {
+                        let strike_dummy =
+                            if state.relic_state.contains(RelicPrototype::StrikeDummy) {
+                                3
+                            } else {
+                                0
+                            };
+
+                        state.apply_attack_damage(
+                            CharacterIndex::Player,
+                            base_amount + strike_dummy,
+                            CharacterIndex::Enemy(target),
+                        )
+                    })
+                }
+                CardPrototype::UltimateStrike => {
+                    let target = target.unwrap();
+                    let base_amount =
+                        if card.upgraded { 20 } else { 14 } + card.enchantment.get_bonus_damage();
+
+                    state.flat_map_simple(|state| {
+                        let strike_dummy =
+                            if state.relic_state.contains(RelicPrototype::StrikeDummy) {
+                                3
+                            } else {
+                                0
+                            };
+
+                        state.apply_attack_damage(
+                            CharacterIndex::Player,
+                            base_amount + strike_dummy,
+                            CharacterIndex::Enemy(target),
+                        )
+                    })
+                }
+                CardPrototype::Slice => {
                     let target = target.unwrap();
                     let base_amount =
                         if card.upgraded { 9 } else { 6 } + card.enchantment.get_bonus_damage();
@@ -1439,6 +1605,12 @@ impl CombatState {
                             base_amount + u16::try_from(fasten).expect("Fasten must be positive"),
                         )
                     })
+                }
+                CardPrototype::UltimateDefend => {
+                    assert!(target.is_none());
+                    let base_amount = if card.upgraded { 15 } else { 11 };
+
+                    state.flat_map_simple(|slf| slf.add_block_from_card(base_amount))
                 }
                 CardPrototype::Deflect => {
                     assert!(target.is_none());
@@ -1563,7 +1735,7 @@ impl CombatState {
                             if slf.player.hand.num_cards() > 1 {
                                 slf.player.waiting_for_decision =
                                     Some(RequiredPlayerDecision::ChooseCardInHand {
-                                        filter: |_| true,
+                                        filter: Filter::All,
                                         action: |state, card| {
                                             state.flat_map_simple(|mut state| {
                                                 state.player.waiting_for_decision = None;
@@ -1603,7 +1775,7 @@ impl CombatState {
                                 if slf.player.hand.num_cards() > 1 {
                                     slf.player.waiting_for_decision =
                                         Some(RequiredPlayerDecision::ChooseCardInHand {
-                                            filter: |_| true,
+                                            filter: Filter::All,
                                             action: |state, card| {
                                                 state.flat_map_simple(|mut state| {
                                                     state.player.waiting_for_decision = None;
@@ -1715,6 +1887,17 @@ impl CombatState {
                         )
                     })
                 }
+                CardPrototype::Snakebite => {
+                    let target = target.unwrap();
+
+                    state.flat_map_simple(|state| {
+                        state.apply_status_to_enemy(
+                            target,
+                            Status::Poison,
+                            if card.upgraded { 10 } else { 7 },
+                        )
+                    })
+                }
                 CardPrototype::CorrosiveWave => {
                     assert!(target.is_none());
                     state.flat_map_simple(|state| {
@@ -1817,6 +2000,8 @@ impl CombatState {
                         )
                     })
                 }
+
+                // FIXME: For some inexplicable reason, the engine refuses to use anticipate before block cards even if it would save HP??????
                 CardPrototype::Anticipate => {
                     assert!(target.is_none());
 
@@ -1824,7 +2009,7 @@ impl CombatState {
                         state.apply_status_change(
                             CharacterIndex::Player,
                             Status::Dexterity,
-                            if card.upgraded { 5 } else { 3 },
+                            if card.upgraded { 3 } else { 2 },
                         )
                     });
 
@@ -1832,7 +2017,7 @@ impl CombatState {
                         state.apply_status_change(
                             CharacterIndex::Player,
                             Status::Anticipate,
-                            if card.upgraded { 5 } else { 3 },
+                            if card.upgraded { 3 } else { 2 },
                         )
                     })
                 }
@@ -1929,25 +2114,35 @@ impl CombatState {
                 CardPrototype::LeadingStrike => {
                     let target = target.unwrap();
                     let base_amount =
-                        if card.upgraded { 10 } else { 7 } + card.enchantment.get_bonus_damage();
+                        if card.upgraded { 6 } else { 3 } + card.enchantment.get_bonus_damage();
 
-                    let state = state.flat_map_simple(|state| {
+                    let mut state = state.flat_map_simple(|state| {
+                        let strike_dummy =
+                            if state.relic_state.contains(RelicPrototype::StrikeDummy) {
+                                3
+                            } else {
+                                0
+                            };
+
                         state.apply_attack_damage(
                             CharacterIndex::Player,
-                            base_amount,
+                            base_amount + strike_dummy,
                             CharacterIndex::Enemy(target),
                         )
                     });
 
-                    state.map(|mut state| {
-                        state.player.hand.add_card(Card {
-                            prototype: CardPrototype::Shiv,
-                            upgraded: false,
-                            enchantment: None,
-                        });
+                    for _ in 0..2 {
+                        state = state.map(|mut state| {
+                            state.player.hand.add_card(Card {
+                                prototype: CardPrototype::Shiv,
+                                upgraded: false,
+                                enchantment: None,
+                            });
 
-                        state
-                    })
+                            state
+                        });
+                    }
+                    state
                 }
                 CardPrototype::Tracking => {
                     assert!(target.is_none());
@@ -2003,7 +2198,6 @@ impl CombatState {
                     state.player.discard_pile.upgrade_all();
                     state.player.draw_pile.upgrade_all();
                     state.player.exhaust_pile.upgrade_all();
-                    state.player.play_pile.upgrade_all();
 
                     state
                 }),
@@ -2038,6 +2232,20 @@ impl CombatState {
                             )
                         })
                     });
+
+                    state.flat_map_simple(|state| {
+                        state.for_all_enemies(|state, index| {
+                            state.apply_attack_damage(
+                                CharacterIndex::Player,
+                                dmg,
+                                CharacterIndex::Enemy(index),
+                            )
+                        })
+                    })
+                }
+                CardPrototype::FlickFlack => {
+                    let dmg =
+                        if card.upgraded { 8 } else { 6 } + card.enchantment.get_bonus_damage();
 
                     state.flat_map_simple(|state| {
                         state.for_all_enemies(|state, index| {
@@ -2158,12 +2366,35 @@ impl CombatState {
                 state
                     .relic_state
                     .set_state_if_present(RelicPrototype::ArtOfWar, 1);
+                state
+                    .relic_state
+                    .set_state_if_present(RelicPrototype::RippleBasin, 1);
                 if let Some(v) = state.relic_state.get_state(RelicPrototype::Shuriken) {
                     if v == 2 {
                         state.player.creature.statuses[Status::Strength] += 1;
                         state.relic_state.set_state(RelicPrototype::Shuriken, 0);
                     } else {
                         state.relic_state.set_state(RelicPrototype::Shuriken, v + 1);
+                    }
+                }
+
+                if let Some(v) = state.relic_state.get_state(RelicPrototype::Nunchaku) {
+                    if v == 2 {
+                        state.player.energy += 1;
+                        state.relic_state.set_state(RelicPrototype::Nunchaku, 0);
+                    } else {
+                        state.relic_state.set_state(RelicPrototype::Nunchaku, v + 1);
+                    }
+                }
+
+                if let Some(v) = state.relic_state.get_state(RelicPrototype::Kusarigama) {
+                    if v == 2 {
+                        state.relic_state.set_state(RelicPrototype::Kusarigama, 0);
+                        todo!("Kusarigama");
+                    } else {
+                        state
+                            .relic_state
+                            .set_state(RelicPrototype::Kusarigama, v + 1);
                     }
                 }
 
@@ -2182,6 +2413,34 @@ impl CombatState {
                 } else {
                     Distribution::single_value(state)
                 }
+            } else if card.prototype.get_kind() == CardKind::Skill {
+                if let Some(v) = state.relic_state.get_state(RelicPrototype::LetterOpener) {
+                    if v == 2 {
+                        state.relic_state.set_state(RelicPrototype::LetterOpener, 0);
+                        state.for_all_enemies(|state, enemy| {
+                            state.apply_unsourced_damage(5, CharacterIndex::Enemy(enemy))
+                        })
+                    } else {
+                        state
+                            .relic_state
+                            .set_state(RelicPrototype::LetterOpener, v + 1);
+                        Distribution::single_value(state)
+                    }
+                } else {
+                    Distribution::single_value(state)
+                }
+                .flat_map_simple(|state| {
+                    state.for_all_enemies(|mut state, enemy| {
+                        let Some(enemy) = state.enemies.get_mut(enemy) else {
+                            unreachable!();
+                        };
+
+                        enemy.creature.statuses[Status::Strength] +=
+                            enemy.creature.statuses[Status::Enrage];
+
+                        Distribution::single_value(state)
+                    })
+                })
             } else {
                 Distribution::single_value(state)
             }
@@ -2192,7 +2451,7 @@ impl CombatState {
                 && Some(0) == state.relic_state.get_state(RelicPrototype::Permafrost)
             {
                 state.relic_state.set_state(RelicPrototype::Permafrost, 1);
-                return state.add_external_block_to_creature(CharacterIndex::Player, 6);
+                return state.add_external_block_to_creature(CharacterIndex::Player, 7);
             }
 
             Distribution::single_value(state)
@@ -2209,6 +2468,8 @@ impl CombatState {
                 }
             });
         }
+
+        let mut card = card;
 
         if let Some(CardEnchantment::Momentum {
             amount,
@@ -2470,6 +2731,9 @@ impl CombatState {
         let source_has_tracking =
             (source_status[Status::Tracking] > 0).then_some(source_status[Status::Tracking]);
 
+        let source_has_painful_stabs = (source_status[Status::PainfulStabs] > 0)
+            .then_some(source_status[Status::PainfulStabs]);
+
         let target_status = match target {
             CharacterIndex::Player => &mut self.player.creature.statuses,
             CharacterIndex::Enemy(index) => {
@@ -2489,7 +2753,11 @@ impl CombatState {
         let personal_hive = target_status[Status::PersonalHive];
 
         let amount = if target_status[Status::Vulnerable] > 0 {
-            amount * 1.5
+            if self.relic_state.contains(RelicPrototype::PaperPhrog) {
+                amount * 1.75
+            } else {
+                amount * 1.5
+            }
         } else {
             amount
         };
@@ -2510,9 +2778,31 @@ impl CombatState {
             CharacterIndex::Player => {
                 let mut unblocked = amount.saturating_sub(self.player.creature.block);
                 self.player.creature.block = self.player.creature.block.saturating_sub(amount);
-                if unblocked > 0 && target_status[Status::Slippery] > 0 {
+                if unblocked > 0
+                    && (target_status[Status::Slippery] > 0
+                        || target_status[Status::Intangible] > 0)
+                {
                     unblocked = 1;
                     target_status[Status::Slippery] -= 1;
+                }
+
+                if unblocked > 0
+                    && let Some(stabs) = source_has_painful_stabs
+                {
+                    // FIXME: Triggers
+                    for _ in 0..stabs {
+                        self.player
+                            .discard_pile
+                            .add_card(CardPrototype::Wound.get_normal_card());
+                    }
+                }
+
+                if target_status[Status::HardToKill] > 0 {
+                    unblocked = unblocked.min(
+                        target_status[Status::HardToKill]
+                            .try_into()
+                            .expect("HardToKill must be positive"),
+                    );
                 }
 
                 if unblocked == 0 && imbalanced {
@@ -2543,8 +2833,17 @@ impl CombatState {
                 let enemy_block = &mut enemy.creature.block;
                 let mut unblocked = amount.saturating_sub(*enemy_block);
                 *enemy_block = enemy_block.saturating_sub(amount);
+
+                if *enemy_block == 0 && enemy.creature.statuses[Status::Burrowed] > 0 {
+                    enemy.creature.statuses[Status::Burrowed] = 0;
+                    enemy.state_machine.current_state = 0;
+                    enemy.state_machine.stunned = 1;
+                }
+
                 if unblocked > 0 {
-                    if enemy.creature.statuses[Status::Slippery] > 0 {
+                    if enemy.creature.statuses[Status::Slippery] > 0
+                        || enemy.creature.statuses[Status::Intangible] > 0
+                    {
                         unblocked = 1;
                         enemy.creature.statuses[Status::Slippery] -= 1;
                     }
@@ -2557,6 +2856,14 @@ impl CombatState {
                     }
 
                     enemy.has_taken_unblocked_attack_damage_this_turn = true;
+                }
+
+                if enemy.creature.statuses[Status::HardToKill] > 0 {
+                    unblocked = unblocked.min(
+                        enemy.creature.statuses[Status::HardToKill]
+                            .try_into()
+                            .expect("HardToKill must be positive"),
+                    );
                 }
 
                 enemy.creature.hp = enemy.creature.hp.saturating_sub(unblocked);
@@ -2641,24 +2948,56 @@ impl CombatState {
             }
         };
 
-        let target_status = &mut target_creature.statuses;
-
         // TODO: Triggers for losing block/hp
 
         let mut unblocked = amount.saturating_sub(target_creature.block);
         target_creature.block = target_creature.block.saturating_sub(amount);
-        if unblocked > 0 && target_status[Status::Slippery] > 0 {
+
+        if target_creature.block == 0 && target_creature.statuses[Status::Burrowed] > 0 {
+            target_creature.statuses[Status::Burrowed] = 0;
+
+            if let CharacterIndex::Enemy(enemy_index) = target {
+                let Some(enemy) = self.enemies.get_mut(enemy_index) else {
+                    return Distribution::single_value(self);
+                };
+                enemy.state_machine.current_state = 0;
+                enemy.state_machine.stunned = 1;
+            }
+        }
+
+        let target_creature = match target {
+            CharacterIndex::Player => &mut self.player.creature,
+            CharacterIndex::Enemy(enemy_index) => {
+                let Some(enemy) = self.enemies.get_mut(enemy_index) else {
+                    return Distribution::single_value(self);
+                };
+                &mut enemy.creature
+            }
+        };
+
+        if unblocked > 0
+            && (target_creature.statuses[Status::Slippery] > 0
+                || target_creature.statuses[Status::Intangible] > 0)
+        {
             unblocked = 1;
-            target_status[Status::Slippery] -= 1;
+            target_creature.statuses[Status::Slippery] -= 1;
+        }
+
+        if target_creature.statuses[Status::HardToKill] > 0 {
+            unblocked = unblocked.min(
+                target_creature.statuses[Status::HardToKill]
+                    .try_into()
+                    .expect("HardToKill must be positive"),
+            );
         }
 
         target_creature.hp = target_creature.hp.saturating_sub(unblocked);
         // TODO: Does this (stuff like stone calendar trigger CurlUp???)
         // TODO: Triggers for gaining block
-        if target_status[Status::CurlUp] > 0 {
-            target_creature.block +=
-                u16::try_from(target_status[Status::CurlUp]).expect("Curl up must be positive");
-            target_status[Status::CurlUp] = 0;
+        if target_creature.statuses[Status::CurlUp] > 0 {
+            target_creature.block += u16::try_from(target_creature.statuses[Status::CurlUp])
+                .expect("Curl up must be positive");
+            target_creature.statuses[Status::CurlUp] = 0;
         }
 
         let state = match target {
@@ -2733,7 +3072,9 @@ impl CombatState {
         let dead = self.enemies.extract_dead();
 
         let mut summon_wrigglers = 0;
+        let mut dead_count = 0;
         for enemy in dead {
+            dead_count += 1;
             if enemy.prototype == EnemyPrototype::ShrinkerBeetle {
                 self.player.creature.statuses[Status::Shrink] = 0;
             }
@@ -2749,7 +3090,7 @@ impl CombatState {
             summon_wrigglers += enemy.creature.statuses[Status::Infested];
         }
 
-        if summon_wrigglers > 0 {
+        let mut state = if summon_wrigglers > 0 {
             let wriggler_hp = 17..=21;
             let hps = iter::repeat_n(wriggler_hp.clone(), summon_wrigglers as usize)
                 .multi_cartesian_product();
@@ -2772,7 +3113,7 @@ impl CombatState {
                         has_acted_this_turn: false,
                         has_taken_unblocked_attack_damage_this_turn: false,
                         state_machine: EnemyStateMachine {
-                            current_state: i % 2,
+                            current_state: (i % 2).try_into().unwrap(),
                             // The enemies stay stunned an extra turn if they are spawned on the enemies turn
                             stunned: 1 + u8::from(state.current_turn_side == CombatSide::Enemies),
                         },
@@ -2783,7 +3124,20 @@ impl CombatState {
             }))
         } else {
             Distribution::single_value(self)
+        };
+
+        for _ in 0..dead_count {
+            state = state.flat_map_simple(|mut state| {
+                if state.relic_state.contains(RelicPrototype::GremlinHorn) {
+                    state.player.energy += 1;
+                    state.draw_single_card()
+                } else {
+                    Distribution::single_value(state)
+                }
+            });
         }
+
+        state
     }
 
     fn apply_status_to_enemy<
@@ -2803,9 +3157,17 @@ impl CombatState {
         mut self,
         target: CharacterIndex,
         status: Status,
-        diff: i16,
+        mut diff: i16,
     ) -> Distribution {
         assert_ne!(diff, 0);
+
+        if status == Status::Poison
+            && self.relic_state.contains(RelicPrototype::SneckoSkull)
+            && diff > 0
+            && matches!(target, CharacterIndex::Enemy(_))
+        {
+            diff += 1;
+        }
 
         let status_list = match target {
             CharacterIndex::Player => &mut self.player.creature.statuses,
@@ -2849,8 +3211,7 @@ pub struct Player {
     pub discard_pile: UnorderedCardSet,
     exhaust_pile: UnorderedCardSet,
 
-    // TODO: Unfortunately the real algorithm is muuch more complex
-    play_pile: UnorderedCardSet,
+    // TODO: Unfortunately the real algorithm is muuch more complex and we need a proper play stack
     waiting_for_decision: Option<RequiredPlayerDecision>,
 
     orbs: Vec<Orb>,
@@ -2867,12 +3228,25 @@ pub struct Player {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum RequiredPlayerDecision {
     ChooseCardInHand {
-        filter: fn(Card) -> bool,
+        filter: Filter,
         action: fn(
             distribution::full::Distribution<CombatState>,
             Card,
         ) -> distribution::full::Distribution<CombatState>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Filter {
+    All,
+}
+
+impl Filter {
+    fn matches(self, card: Card) -> bool {
+        match self {
+            Filter::All => true,
+        }
+    }
 }
 
 impl Player {
@@ -2901,7 +3275,6 @@ impl Player {
             draw_pile_top_card: None,
             discard_pile: vec![].into_iter().collect(),
             exhaust_pile: vec![].into_iter().collect(),
-            play_pile: vec![].into_iter().collect(),
             waiting_for_decision: None,
             orbs: vec![],
             num_orb_slots: 1,
@@ -3046,6 +3419,24 @@ pub enum Status {
     Hex,
     #[serde(rename = "DAMPEN_POWER")]
     Dampen,
+    #[serde(rename = "CHAINS_OF_BINDING_POWER")]
+    ChainsOfBinding,
+    #[serde(rename = "BURROWED_POWER")]
+    Burrowed,
+
+    #[serde(rename = "HARD_TO_KILL_POWER")]
+    HardToKill,
+    #[serde(rename = "ADAPTABLE_POWER")]
+    Adaptable,
+    #[serde(rename = "ENRAGE_POWER")]
+    Enrage,
+    #[serde(rename = "PAINFUL_STABS_POWER")]
+    PainfulStabs,
+    #[serde(rename = "NEMESIS_POWER")]
+    Nemesis,
+
+    #[serde(rename = "INTANGIBLE_POWER")]
+    Intangible,
 }
 
 impl Status {
@@ -3095,13 +3486,21 @@ impl Status {
             Status::Dampen => true,
             Status::Blur => false,
             Status::SerpentForm => false,
+            Status::ChainsOfBinding => true,
+            Status::Burrowed => false,
+            Status::HardToKill => false,
+            Status::Adaptable => false,
+            Status::Enrage => false,
+            Status::PainfulStabs => false,
+            Status::Nemesis => false,
+            Status::Intangible => false,
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct EnemyStateMachine {
-    pub current_state: usize,
+    pub current_state: u8,
     pub stunned: u8,
 }
 
@@ -3124,6 +3523,12 @@ pub enum EnemyMoveSet {
     Random {
         weighted_options: &'static [(EnemyMove, u8)],
     },
+    RandomNoRepeatEqualWeights {
+        options: &'static [EnemyMove],
+    },
+    RandomEqualWeights {
+        options: &'static [EnemyMove],
+    },
     Prefix {
         prefixed_move: EnemyMove,
         after: &'static Self,
@@ -3132,9 +3537,39 @@ pub enum EnemyMoveSet {
         alone: &'static Self,
         not_alone: &'static Self,
     },
+
+    MultipleSets {
+        movesets: &'static [Self],
+    },
 }
 
 impl EnemyMoveSet {
+    fn count(&self) -> u8 {
+        match self {
+            EnemyMoveSet::ConstantRotation { rotation } => {
+                rotation.len().try_into().expect("Too many states")
+            }
+            EnemyMoveSet::RandomNoRepeat { weighted_options } => {
+                weighted_options.len().try_into().expect("Too many states")
+            }
+            EnemyMoveSet::Random { weighted_options } => {
+                weighted_options.len().try_into().expect("Too many states")
+            }
+            EnemyMoveSet::RandomNoRepeatEqualWeights { options } => {
+                options.len().try_into().expect("Too many states")
+            }
+            EnemyMoveSet::RandomEqualWeights { options } => {
+                options.len().try_into().expect("Too many states")
+            }
+            EnemyMoveSet::Prefix {
+                prefixed_move: _,
+                after,
+            } => after.count() + 1,
+            EnemyMoveSet::IsAlone { alone, not_alone } => alone.count() + not_alone.count(),
+            EnemyMoveSet::MultipleSets { movesets } => movesets.iter().map(Self::count).sum(),
+        }
+    }
+
     pub fn eval(
         &self,
         state_machine: &EnemyStateMachine,
@@ -3147,13 +3582,20 @@ impl EnemyMoveSet {
 
         match self {
             EnemyMoveSet::ConstantRotation { rotation } => {
-                rotation[state_machine.current_state % rotation.len()]
+                rotation[usize::from(state_machine.current_state)]
             }
             EnemyMoveSet::Random { weighted_options } => {
-                weighted_options[state_machine.current_state].0
+                weighted_options[usize::from(state_machine.current_state)].0
             }
             EnemyMoveSet::RandomNoRepeat { weighted_options } => {
-                weighted_options[state_machine.current_state].0
+                weighted_options[usize::from(state_machine.current_state)].0
+            }
+
+            EnemyMoveSet::RandomEqualWeights { options } => {
+                options[usize::from(state_machine.current_state)]
+            }
+            EnemyMoveSet::RandomNoRepeatEqualWeights { options } => {
+                options[usize::from(state_machine.current_state)]
             }
             EnemyMoveSet::Prefix {
                 prefixed_move,
@@ -3178,6 +3620,27 @@ impl EnemyMoveSet {
                 } else {
                     not_alone.eval(state_machine, status, is_alone)
                 }
+            }
+
+            EnemyMoveSet::MultipleSets { movesets } => {
+                let mut state = state_machine.current_state;
+
+                for moveset in *movesets {
+                    let count = moveset.count();
+                    if state < count {
+                        return moveset.eval(
+                            &EnemyStateMachine {
+                                current_state: state,
+                                stunned: state_machine.stunned,
+                            },
+                            status,
+                            is_alone,
+                        );
+                    }
+
+                    state -= count;
+                }
+                unreachable!()
             }
         }
     }
@@ -3209,16 +3672,17 @@ impl EnemyMoveSet {
         }
 
         match self {
-            Self::ConstantRotation { .. } => {
+            Self::ConstantRotation { rotation } => {
                 state_machine.current_state += 1;
+                state_machine.current_state %= rotation.len() as u8;
                 Distribution::single_value(state_machine)
             }
             Self::RandomNoRepeat { weighted_options } => {
                 Distribution::from_duplicates(weighted_options.iter().enumerate().filter_map(
                     |(i, (_move, weight))| {
-                        (i != state_machine.current_state).then_some((
+                        (i != usize::from(state_machine.current_state)).then_some((
                             EnemyStateMachine {
-                                current_state: i,
+                                current_state: i.try_into().unwrap(),
                                 stunned: 0,
                             },
                             usize::from(*weight),
@@ -3231,13 +3695,29 @@ impl EnemyMoveSet {
                     |(i, (_move, weight))| {
                         (
                             EnemyStateMachine {
-                                current_state: i,
+                                current_state: i.try_into().unwrap(),
                                 stunned: 0,
                             },
                             usize::from(*weight),
                         )
                     },
                 ))
+            }
+            Self::RandomNoRepeatEqualWeights { options } => {
+                Distribution::equal_chance(options.iter().enumerate().filter_map(|(i, _move)| {
+                    (i != usize::from(state_machine.current_state)).then_some(EnemyStateMachine {
+                        current_state: i.try_into().unwrap(),
+                        stunned: 0,
+                    })
+                }))
+            }
+            Self::RandomEqualWeights { options } => {
+                Distribution::equal_chance(options.iter().enumerate().map(|(i, _move)| {
+                    EnemyStateMachine {
+                        current_state: i.try_into().unwrap(),
+                        stunned: 0,
+                    }
+                }))
             }
             // FIXME: Something about the state machine code is still borked I think
             // The Knights Act3 Fight kept desyncing, But I did not manage to debug it. It could *theoretically* be an issue in their scripts, but I dont think
@@ -3262,8 +3742,40 @@ impl EnemyMoveSet {
                 })
             }
             Self::IsAlone { .. } => {
+                // FIXME: This does not work with multiple sets. That is nor needed for the current set of enemies tho.
                 state_machine.current_state += 1;
                 Distribution::single_value(state_machine)
+            }
+
+            Self::MultipleSets { movesets } => {
+                let mut count = 0;
+                let mut state = state_machine.current_state;
+
+                let moveset = movesets
+                    .iter()
+                    .find(|moveset| {
+                        let this_count = moveset.count();
+                        count += this_count;
+                        if state < this_count {
+                            return true;
+                        }
+
+                        state = this_count
+                            .checked_sub(this_count)
+                            .expect("Could not get moveset");
+
+                        false
+                    })
+                    .expect("Could not get moveset");
+
+                state_machine.current_state -= count;
+
+                let new_state = moveset.advance(state_machine, status);
+
+                new_state.map(|mut state| {
+                    state.current_state += count;
+                    state
+                })
             }
         }
     }
@@ -3279,6 +3791,7 @@ pub enum EnemyAction {
     Attack { base_damage: u16, repeat: u16 },
     Block { amount: u16 },
     ApplyStatusSelf { status: Status, diff: i16 },
+    ApplyStatusTeammate { status: Status, diff: i16 },
     ApplyStatusPlayer { status: Status, diff: i16 },
     ShuffleCards { card: Card, count: u8, pile: Pile },
 }
@@ -3345,37 +3858,39 @@ pub enum EnemyPrototype {
     FlailKnight,
     SpectralKnight,
     MagiKnight,
+    PunchConstruct,
+    TorchHeadAmalgam,
+    Queen,
+    SoulNexus,
+    Tunneler,
+    Exoskeleton,
+    Myte,
+    TestSubject,
 }
 
 impl EnemyPrototype {
     #[allow(clippy::match_same_arms)]
     pub const fn get_moveset(self) -> EnemyMoveSet {
         match self {
-            Self::LeafSlimeS => EnemyMoveSet::RandomNoRepeat {
-                weighted_options: &[
-                    (
-                        EnemyMove {
-                            actions: &[EnemyAction::Attack {
-                                base_damage: 3,
-                                repeat: 1,
-                            }],
-                        },
-                        1,
-                    ),
-                    (
-                        EnemyMove {
-                            actions: &[EnemyAction::ShuffleCards {
-                                card: Card {
-                                    prototype: CardPrototype::Slimed,
-                                    upgraded: false,
-                                    enchantment: None,
-                                },
-                                count: 1,
-                                pile: Pile::Discard,
-                            }],
-                        },
-                        1,
-                    ),
+            Self::LeafSlimeS => EnemyMoveSet::RandomNoRepeatEqualWeights {
+                options: &[
+                    EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 3,
+                            repeat: 1,
+                        }],
+                    },
+                    EnemyMove {
+                        actions: &[EnemyAction::ShuffleCards {
+                            card: Card {
+                                prototype: CardPrototype::Slimed,
+                                upgraded: false,
+                                enchantment: None,
+                            },
+                            count: 1,
+                            pile: Pile::Discard,
+                        }],
+                    },
                 ],
             },
             Self::LeafSlimeM => EnemyMoveSet::ConstantRotation {
@@ -3562,7 +4077,7 @@ impl EnemyPrototype {
                 rotation: &[
                     EnemyMove {
                         actions: &[EnemyAction::Attack {
-                            base_damage: 16,
+                            base_damage: 17,
                             repeat: 1,
                         }],
                     },
@@ -3842,8 +4357,8 @@ impl EnemyPrototype {
                     EnemyMove {
                         actions: &[
                             EnemyAction::Attack {
-                                base_damage: 2,
-                                repeat: 2,
+                                base_damage: 8,
+                                repeat: 1,
                             },
                             EnemyAction::ApplyStatusPlayer {
                                 status: Status::Weak,
@@ -4361,35 +4876,26 @@ impl EnemyPrototype {
             },
             // TODO: Technically, the buff move cannot be repeated. But this is an overapproximation,
             // which can only result in slightly worse play, not in desyncs.
-            Self::FlailKnight => EnemyMoveSet::Random {
-                weighted_options: &[
-                    (
-                        EnemyMove {
-                            actions: &[EnemyAction::Attack {
-                                base_damage: 15,
-                                repeat: 1,
-                            }],
-                        },
-                        1,
-                    ),
-                    (
-                        EnemyMove {
-                            actions: &[EnemyAction::Attack {
-                                base_damage: 9,
-                                repeat: 2,
-                            }],
-                        },
-                        1,
-                    ),
-                    (
-                        EnemyMove {
-                            actions: &[EnemyAction::ApplyStatusSelf {
-                                status: Status::Strength,
-                                diff: 3,
-                            }],
-                        },
-                        1,
-                    ),
+            Self::FlailKnight => EnemyMoveSet::RandomEqualWeights {
+                options: &[
+                    EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 15,
+                            repeat: 1,
+                        }],
+                    },
+                    EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 9,
+                            repeat: 2,
+                        }],
+                    },
+                    EnemyMove {
+                        actions: &[EnemyAction::ApplyStatusSelf {
+                            status: Status::Strength,
+                            diff: 3,
+                        }],
+                    },
                 ],
             },
             // NOTE(BSC): The wiki lied to me. Spectral Knight does *not* infact alternate between its attacks
@@ -4401,26 +4907,20 @@ impl EnemyPrototype {
                     }],
                 },
                 // TODO: Technically the rules around repeating are complex, and some things are disallowed, but this is close enough
-                after: &EnemyMoveSet::Random {
-                    weighted_options: &[
-                        (
-                            EnemyMove {
-                                actions: &[EnemyAction::Attack {
-                                    base_damage: 15,
-                                    repeat: 1,
-                                }],
-                            },
-                            1,
-                        ),
-                        (
-                            EnemyMove {
-                                actions: &[EnemyAction::Attack {
-                                    base_damage: 3,
-                                    repeat: 3,
-                                }],
-                            },
-                            1,
-                        ),
+                after: &EnemyMoveSet::RandomEqualWeights {
+                    options: &[
+                        EnemyMove {
+                            actions: &[EnemyAction::Attack {
+                                base_damage: 15,
+                                repeat: 1,
+                            }],
+                        },
+                        EnemyMove {
+                            actions: &[EnemyAction::Attack {
+                                base_damage: 3,
+                                repeat: 3,
+                            }],
+                        },
                     ],
                 },
             },
@@ -4462,6 +4962,318 @@ impl EnemyPrototype {
                     },
                 },
             },
+            Self::PunchConstruct => EnemyMoveSet::ConstantRotation {
+                rotation: &[
+                    EnemyMove {
+                        actions: &[EnemyAction::Block { amount: 10 }],
+                    },
+                    EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 14,
+                            repeat: 1,
+                        }],
+                    },
+                    EnemyMove {
+                        actions: &[
+                            EnemyAction::Attack {
+                                base_damage: 5,
+                                repeat: 2,
+                            },
+                            EnemyAction::ApplyStatusPlayer {
+                                status: Status::Weak,
+                                diff: 1,
+                            },
+                        ],
+                    },
+                ],
+            },
+            Self::TorchHeadAmalgam => EnemyMoveSet::Prefix {
+                prefixed_move: EnemyMove {
+                    actions: &[EnemyAction::Attack {
+                        base_damage: 18,
+                        repeat: 1,
+                    }],
+                },
+                after: &EnemyMoveSet::Prefix {
+                    prefixed_move: EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 18,
+                            repeat: 1,
+                        }],
+                    },
+                    after: &EnemyMoveSet::ConstantRotation {
+                        rotation: &[
+                            EnemyMove {
+                                actions: &[EnemyAction::Attack {
+                                    base_damage: 8,
+                                    repeat: 3,
+                                }],
+                            },
+                            EnemyMove {
+                                actions: &[EnemyAction::Attack {
+                                    base_damage: 14,
+                                    repeat: 1,
+                                }],
+                            },
+                            EnemyMove {
+                                actions: &[EnemyAction::Attack {
+                                    base_damage: 14,
+                                    repeat: 1,
+                                }],
+                            },
+                        ],
+                    },
+                },
+            },
+            Self::Queen => EnemyMoveSet::Prefix {
+                prefixed_move: EnemyMove {
+                    actions: &[EnemyAction::ApplyStatusPlayer {
+                        status: Status::ChainsOfBinding,
+                        diff: 3,
+                    }],
+                },
+                after: &EnemyMoveSet::Prefix {
+                    prefixed_move: EnemyMove {
+                        actions: &[
+                            EnemyAction::ApplyStatusPlayer {
+                                status: Status::Frail,
+                                diff: 99,
+                            },
+                            EnemyAction::ApplyStatusPlayer {
+                                status: Status::Weak,
+                                diff: 99,
+                            },
+                            EnemyAction::ApplyStatusPlayer {
+                                status: Status::Vulnerable,
+                                diff: 99,
+                            },
+                        ],
+                    },
+                    after: &EnemyMoveSet::IsAlone {
+                        alone: &EnemyMoveSet::ConstantRotation {
+                            rotation: &[
+                                EnemyMove {
+                                    actions: &[EnemyAction::ApplyStatusTeammate {
+                                        status: Status::Strength,
+                                        diff: 1,
+                                    }],
+                                },
+                                EnemyMove {
+                                    actions: &[EnemyAction::Block { amount: 20 }],
+                                },
+                            ],
+                        },
+                        not_alone: &EnemyMoveSet::ConstantRotation {
+                            rotation: &[
+                                EnemyMove {
+                                    actions: &[EnemyAction::Attack {
+                                        base_damage: 3,
+                                        repeat: 5,
+                                    }],
+                                },
+                                EnemyMove {
+                                    actions: &[EnemyAction::Attack {
+                                        base_damage: 15,
+                                        repeat: 1,
+                                    }],
+                                },
+                                EnemyMove {
+                                    actions: &[EnemyAction::ApplyStatusSelf {
+                                        status: Status::Strength,
+                                        diff: 2,
+                                    }],
+                                },
+                            ],
+                        },
+                    },
+                },
+            },
+            Self::SoulNexus => EnemyMoveSet::RandomNoRepeatEqualWeights {
+                options: &[
+                    EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 29,
+                            repeat: 1,
+                        }],
+                    },
+                    EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 6,
+                            repeat: 4,
+                        }],
+                    },
+                    EnemyMove {
+                        actions: &[
+                            EnemyAction::Attack {
+                                base_damage: 18,
+                                repeat: 1,
+                            },
+                            EnemyAction::ApplyStatusPlayer {
+                                status: Status::Vulnerable,
+                                diff: 2,
+                            },
+                            EnemyAction::ApplyStatusPlayer {
+                                status: Status::Weak,
+                                diff: 2,
+                            },
+                        ],
+                    },
+                ],
+            },
+
+            Self::Tunneler => EnemyMoveSet::Prefix {
+                prefixed_move: EnemyMove {
+                    actions: &[EnemyAction::Attack {
+                        base_damage: 13,
+                        repeat: 1,
+                    }],
+                },
+                after: &EnemyMoveSet::Prefix {
+                    prefixed_move: EnemyMove {
+                        actions: &[
+                            EnemyAction::ApplyStatusSelf {
+                                status: Status::Burrowed,
+                                diff: 1,
+                            },
+                            EnemyAction::Block { amount: 32 },
+                        ],
+                    },
+                    after: &EnemyMoveSet::ConstantRotation {
+                        rotation: &[EnemyMove {
+                            actions: &[EnemyAction::Attack {
+                                base_damage: 23,
+                                repeat: 1,
+                            }],
+                        }],
+                    },
+                },
+            },
+            // TODO: The real algorithm is more complex, but this is an overapproximation which will avoid desyncs and only slightly reduce playing srenth
+            Self::Exoskeleton => EnemyMoveSet::RandomEqualWeights {
+                options: &[
+                    EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 1,
+                            repeat: 3,
+                        }],
+                    },
+                    EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 8,
+                            repeat: 1,
+                        }],
+                    },
+                    EnemyMove {
+                        actions: &[EnemyAction::ApplyStatusSelf {
+                            status: Status::Strength,
+                            diff: 2,
+                        }],
+                    },
+                ],
+            },
+            Self::Myte => EnemyMoveSet::ConstantRotation {
+                rotation: &[
+                    EnemyMove {
+                        actions: &[EnemyAction::ShuffleCards {
+                            card: Card {
+                                prototype: CardPrototype::Toxic,
+                                upgraded: false,
+                                enchantment: None,
+                            },
+                            count: 2,
+                            pile: Pile::Hand,
+                        }],
+                    },
+                    EnemyMove {
+                        actions: &[EnemyAction::Attack {
+                            base_damage: 13,
+                            repeat: 1,
+                        }],
+                    },
+                    EnemyMove {
+                        actions: &[
+                            EnemyAction::Attack {
+                                base_damage: 13,
+                                repeat: 1,
+                            },
+                            EnemyAction::ApplyStatusSelf {
+                                status: Status::Strength,
+                                diff: 2,
+                            },
+                        ],
+                    },
+                ],
+            },
+            Self::TestSubject => EnemyMoveSet::MultipleSets {
+                movesets: &[
+                    EnemyMoveSet::ConstantRotation {
+                        rotation: &[
+                            EnemyMove {
+                                actions: &[EnemyAction::Attack {
+                                    base_damage: 20,
+                                    repeat: 1,
+                                }],
+                            },
+                            EnemyMove {
+                                actions: &[
+                                    EnemyAction::Attack {
+                                        base_damage: 14,
+                                        repeat: 1,
+                                    },
+                                    EnemyAction::ApplyStatusPlayer {
+                                        status: Status::Vulnerable,
+                                        diff: 1,
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                    EnemyMoveSet::ConstantRotation {
+                        rotation: &[
+                            // FIXME: This hits one more time for each time it runs. That is not currently possible yet
+                            EnemyMove {
+                                actions: &[EnemyAction::Attack {
+                                    base_damage: 10,
+                                    repeat: 3,
+                                }],
+                            },
+                        ],
+                    },
+                    EnemyMoveSet::ConstantRotation {
+                        rotation: &[
+                            EnemyMove {
+                                actions: &[EnemyAction::Attack {
+                                    base_damage: 10,
+                                    repeat: 3,
+                                }],
+                            },
+                            EnemyMove {
+                                actions: &[EnemyAction::Attack {
+                                    base_damage: 45,
+                                    repeat: 1,
+                                }],
+                            },
+                            EnemyMove {
+                                actions: &[
+                                    EnemyAction::ShuffleCards {
+                                        card: Card {
+                                            prototype: CardPrototype::Burn,
+                                            upgraded: false,
+                                            enchantment: None,
+                                        },
+                                        count: 3,
+                                        pile: Pile::Discard,
+                                    },
+                                    EnemyAction::ApplyStatusSelf {
+                                        status: Status::Strength,
+                                        diff: 2,
+                                    },
+                                ],
+                            },
+                        ],
+                    },
+                ],
+            },
         }
     }
 }
@@ -4481,7 +5293,7 @@ pub(crate) mod test {
     pub fn simple_test_combat_state() -> CombatState {
         CombatState {
             turn_counter: 0,
-            player: Player::default(),
+            player: Box::new(Player::default()),
             current_turn_side: CombatSide::Player,
             enemies: vec![
                 Enemy {
@@ -4528,7 +5340,7 @@ pub(crate) mod test {
         CombatState {
             turn_counter: 2,
             current_turn_side: CombatSide::Player,
-            player: Player {
+            player: Box::new(Player {
                 hand: vec![
                     Card {
                         prototype: Neutralize,
@@ -4600,7 +5412,6 @@ pub(crate) mod test {
                 draw_pile_top_card: None,
                 discard_pile: vec![].into_iter().collect(),
                 exhaust_pile: vec![].into_iter().collect(),
-                play_pile: vec![].into_iter().collect(),
                 waiting_for_decision: None,
                 orbs: vec![],
                 num_orb_slots: 1,
@@ -4613,7 +5424,7 @@ pub(crate) mod test {
                     statuses: EnumMap::default(),
                 },
                 skip_next_duration_tick: EnumMap::default(),
-            },
+            }),
             enemies: vec![
                 Enemy {
                     prototype: FuzzyWurmCrawler,
@@ -4659,7 +5470,7 @@ pub(crate) mod test {
         CombatState {
             turn_counter: 1,
             current_turn_side: CombatSide::Player,
-            player: Player {
+            player: Box::new(Player {
                 skip_next_duration_tick: EnumMap::default(),
                 hand: vec![
                     Card {
@@ -4697,7 +5508,6 @@ pub(crate) mod test {
                 .into_iter()
                 .collect(),
                 exhaust_pile: vec![].into_iter().collect(),
-                play_pile: vec![].into_iter().collect(),
                 waiting_for_decision: None,
                 orbs: vec![],
                 num_orb_slots: 1,
@@ -4709,7 +5519,7 @@ pub(crate) mod test {
                     block: 0,
                     statuses: EnumMap::default(),
                 },
-            },
+            }),
             enemies: vec![Enemy {
                 prototype: FuzzyWurmCrawler,
                 creature: Creature {
@@ -4734,7 +5544,7 @@ pub(crate) mod test {
         CombatState {
             turn_counter: 0,
             current_turn_side: CombatSide::Player,
-            player: Player {
+            player: Box::new(Player {
                 skip_next_duration_tick: EnumMap::default(),
                 hand: vec![
                     CardPrototype::Defend.get_normal_card(),
@@ -4746,7 +5556,6 @@ pub(crate) mod test {
                 draw_pile_top_card: None,
                 discard_pile: vec![].into_iter().collect(),
                 exhaust_pile: vec![].into_iter().collect(),
-                play_pile: vec![].into_iter().collect(),
                 waiting_for_decision: None,
                 orbs: vec![],
                 num_orb_slots: 1,
@@ -4758,7 +5567,7 @@ pub(crate) mod test {
                     block: 0,
                     statuses: EnumMap::default(),
                 },
-            },
+            }),
             enemies: vec![Enemy {
                 prototype: EnemyPrototype::FuzzyWurmCrawler,
                 creature: Creature {

@@ -23,9 +23,9 @@ serde_json = "1.0.149"
 serde_path_to_error = "0.1.20"
 timer = "0.2.0"
 strum = { version = "0.28.0", features = ["derive"] }
-sts2mcts = { path = "../sts2mcts", features = ["nps"] }
 smallvec = "1.15.1"
 take_mut = "0.2.2"
+sts2mcts = { path = "../sts2mcts", features = ["nps"] }
 # sts2mcts = { path = "../sts2mcts" }
 
 [dev-dependencies]

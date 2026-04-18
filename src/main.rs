@@ -158,12 +158,17 @@ fn run_mcts() {
             let mut engine: ParMCTS<CombatState> = ParMCTS::new(real_state.clone());
 
             loop {
-                // Do not discard the full game tree, since previous work is still valuable
-                engine.advance(&real_state);
+                // TODO: Maybe dont discard the full game tree, since previous work is still valuable?
+                // This does significantly increase maximum memory consumption
+                // engine.advance(&real_state);
+                engine.clear_advance(&real_state);
 
                 let action = engine.par_search(Duration::from_secs(5));
                 dbg!(engine.principal_chain().collect_vec());
-                dbg!(sts2mcts::mcts::NODES_CHECKED.load(std::sync::atomic::Ordering::Relaxed));
+                dbg!(
+                    sts2mcts::mcts::NODES_CHECKED
+                        .fetch_min(0, std::sync::atomic::Ordering::Relaxed)
+                );
                 dbg!(action);
 
                 comm.apply_action(action);
@@ -173,6 +178,9 @@ fn run_mcts() {
                 // After applying the action on the game, we need to wait for stuff to settle (I do not know what the game returns while the animations are playing)
                 // TODO: Use the time on calcs instead of just waiting
                 // engine.par_search(Duration::from_secs(4));
+                // engine.trim_pre_advance();
+                engine.clear();
+
                 thread::sleep(animations_done - Instant::now());
 
                 state.dedup();
@@ -272,4 +280,165 @@ fn run_expectimax() {
     }
 
     println!("No more action, is the fight over?");
+}
+
+#[cfg(test)]
+mod test {
+    use std::{iter::once, time::Duration};
+
+    use rayon::iter::{IntoParallelIterator, ParallelIterator};
+    use strum::IntoEnumIterator;
+    use sts2mcts::mcts::MCTS;
+
+    use crate::{
+        combat_state::{
+            self, RunInfo,
+            cards::{Card, CardPrototype},
+            encounter::{Act, EncounterPrototype},
+            relics::RelicPrototype,
+        },
+        distribution::{self, Distribution},
+    };
+
+    fn eval_across_encounters(
+        run_state: &RunInfo,
+        encounter_filter: impl Fn(&EncounterPrototype) -> bool,
+    ) -> f32 {
+        let num_starts_per_encounter = rayon::current_num_threads();
+
+        let mut total_eval: f32 = 0.0;
+
+        for encounter in EncounterPrototype::iter()
+            .filter(|encounter| encounter.is_finished_implementing())
+            .filter(|e| (encounter_filter)(e))
+        {
+            dbg!(encounter);
+            total_eval += (0..num_starts_per_encounter)
+                .into_par_iter()
+                .map(|_| {
+                    let starting_state = combat_state::CombatState::get_starting_states::<
+                        distribution::single::Distribution<_>,
+                    >(encounter, run_state, |_hps| true)
+                    .collapse();
+
+                    let mut engine = MCTS::new(starting_state);
+
+                    engine.search(Duration::from_secs(1));
+
+                    engine.expected_eval()
+                })
+                .sum::<f32>();
+        }
+
+        dbg!(total_eval)
+    }
+
+    #[test]
+    fn best_card_to_add() {
+        let run_state = RunInfo {
+            hp: 49,
+            max_hp: 70,
+            deck: vec![
+                CardPrototype::Strike.get_normal_card(),
+                CardPrototype::Strike.get_normal_card(),
+                CardPrototype::Defend.get_normal_card(),
+                CardPrototype::Defend.get_normal_card(),
+                CardPrototype::Defend.get_normal_card(),
+                CardPrototype::Defend.get_normal_card(),
+                CardPrototype::Defend.get_normal_card(),
+                CardPrototype::Neutralize.get_normal_card().upgraded(),
+                CardPrototype::Survivor.get_normal_card(),
+                CardPrototype::DodgeAndRoll.get_normal_card().upgraded(),
+                CardPrototype::DaggerSpray.get_normal_card().upgraded(),
+                CardPrototype::CloakAndDagger.get_normal_card().upgraded(),
+                CardPrototype::PiercingWail.get_normal_card(),
+                CardPrototype::NoxiousFumes.get_normal_card().upgraded(),
+                CardPrototype::PiercingWail.get_normal_card(),
+                CardPrototype::CloakAndDagger.get_normal_card().upgraded(),
+                CardPrototype::LegSweep.get_normal_card().upgraded(),
+                CardPrototype::Footwork.get_normal_card().upgraded(),
+                CardPrototype::PoisonedStab.get_normal_card().upgraded(),
+                CardPrototype::PoisonedStab.get_normal_card(),
+                CardPrototype::DeadlyPoison.get_normal_card(),
+                CardPrototype::Blur.get_normal_card(),
+            ],
+            relic_state: [
+                RelicPrototype::RingOfTheDrake,
+                RelicPrototype::Vajra,
+                RelicPrototype::OddlySmoothStone,
+                RelicPrototype::MeatOnTheBone,
+                RelicPrototype::HornCleat,
+                RelicPrototype::MrStruggles,
+                RelicPrototype::BagOfMarbles,
+                RelicPrototype::Candelabra,
+                RelicPrototype::Sai,
+            ]
+            .into_iter()
+            .collect(),
+        };
+
+        let past_encounters = [
+            EncounterPrototype::ShrinkerBeetle,
+            EncounterPrototype::SlimesWeak,
+            EncounterPrototype::SingleNibbit,
+            EncounterPrototype::FuzzyWurmCrawler,
+            EncounterPrototype::PhrogParasite,
+            EncounterPrototype::BygoneEffigy,
+            EncounterPrototype::Byrdonis,
+            EncounterPrototype::Vantom,
+            EncounterPrototype::DoubleNibbit,
+            EncounterPrototype::BeetleAndFuzzy,
+            EncounterPrototype::SingleCubexConstruct,
+            EncounterPrototype::RubyRaiders,
+            EncounterPrototype::TheKin,
+            EncounterPrototype::SoloTunneler,
+            EncounterPrototype::BowlbugsWeak,
+            EncounterPrototype::BowlbugsStrong,
+            EncounterPrototype::InfestedPrism,
+            EncounterPrototype::SpinyToad,
+            EncounterPrototype::Entomancer,
+            EncounterPrototype::DevotedSculptor,
+            EncounterPrototype::TurretOperator,
+            EncounterPrototype::SoulNexus,
+            EncounterPrototype::OwlMagistrate,
+            EncounterPrototype::MechaKnight,
+            EncounterPrototype::Knights,
+            EncounterPrototype::SlimedBerserker,
+            EncounterPrototype::ConstructGang,
+        ];
+
+        let cards: [Vec<_>; _] = [
+            vec![],
+            vec![CardPrototype::Acrobatics.get_normal_card().upgraded()],
+            // vec![CardPrototype::DeadlyPoison.get_normal_card().upgraded()],
+            // vec![CardPrototype::Untouchable.get_normal_card().upgraded()],
+        ];
+
+        // let cards: Vec<Vec<_>> = CardPrototype::iter()
+        //     .filter(|c| *c != CardPrototype::FranticEscape)
+        //     .map(|p| vec![p.get_normal_card()])
+        //     .collect();
+
+        let best_card = cards
+            .into_iter()
+            .map(|card| {
+                let mut state = run_state.clone();
+
+                for card in &card {
+                    state.deck.push(*card);
+                }
+
+                (
+                    card,
+                    eval_across_encounters(&state, |e| {
+                        e.get_act() == Act::Glory && !past_encounters.contains(e)
+                    }),
+                )
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap()
+            .0;
+
+        dbg!(best_card);
+    }
 }

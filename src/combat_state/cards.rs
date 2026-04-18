@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use enum_map::Enum;
 use itertools::Itertools;
 use rapidhash::fast::RapidHasher;
-use strum::Display;
+use strum::{Display, EnumIter};
 
 #[derive(Debug, Clone, Eq)]
 pub struct UnorderedCardSet {
@@ -32,22 +32,21 @@ where
 }
 
 impl UnorderedCardSet {
-    pub fn launder(self) -> UnorderedCardSet {
-        UnorderedCardSet {
-            cards: self.cards.into_iter().collect(),
-        }
-    }
-
     pub fn append(&mut self, other: &mut Self) {
-        for (new_card, count) in other.cards.drain(..) {
+        for (new_card, count) in &mut other.cards {
+            if *count == 0 {
+                continue;
+            }
             match self
                 .cards
                 .iter()
-                .position(|(card, _count)| *card == new_card)
+                .position(|(card, _count)| *card == *new_card)
             {
-                Some(idx) => self.cards[idx].1 += count,
-                None => self.cards.push((new_card, count)),
+                Some(idx) => self.cards[idx].1 += *count,
+                None => self.cards.push((*new_card, *count)),
             }
+
+            *count = 0;
         }
     }
 
@@ -112,6 +111,7 @@ impl UnorderedCardSet {
     }
 }
 
+// TODO: I think this is incorrect
 impl PartialEq for UnorderedCardSet {
     fn eq(&self, other: &Self) -> bool {
         if self.iter().count() != self.iter().count() {
@@ -218,11 +218,21 @@ const ENERGY: [Cost; 5] = [
 ];
 
 impl Card {
+    pub fn upgraded(self) -> Self {
+        Self {
+            prototype: self.prototype,
+            upgraded: true,
+            enchantment: self.enchantment,
+        }
+    }
+
     #[allow(clippy::match_same_arms)]
     pub fn get_cost(self) -> Cost {
         let cost_without_enchantment = match (self.prototype, self.upgraded) {
             (CardPrototype::Strike, _) => ENERGY[1],
             (CardPrototype::Defend, _) => ENERGY[1],
+            (CardPrototype::UltimateStrike, _) => ENERGY[1],
+            (CardPrototype::UltimateDefend, _) => ENERGY[1],
             (CardPrototype::Neutralize, _) => ENERGY[0],
 
             // FIXME: DEBUG: Do not play Survivor since we cannot block yet
@@ -238,6 +248,7 @@ impl Card {
             (CardPrototype::Infection, _) => ENERGY[0],
             (CardPrototype::Wound, _) => ENERGY[0],
             (CardPrototype::Burn, _) => ENERGY[0],
+            (CardPrototype::Toxic, _) => ENERGY[1],
             (CardPrototype::Soot, _) => ENERGY[0],
             (CardPrototype::Greed, _) => ENERGY[0],
             (CardPrototype::PreciseCut, _) => ENERGY[0],
@@ -284,6 +295,9 @@ impl Card {
             (CardPrototype::Blur, _) => ENERGY[1],
             (CardPrototype::SerpentForm, _) => ENERGY[3],
             (CardPrototype::Untouchable, _) => ENERGY[2],
+            (CardPrototype::Slice, _) => ENERGY[0],
+            (CardPrototype::FlickFlack, _) => ENERGY[1],
+            (CardPrototype::Snakebite, _) => ENERGY[2],
         };
 
         if self.enchantment == Some(CardEnchantment::TezcatarasEmber) {
@@ -297,10 +311,12 @@ impl Card {
     }
 
     #[allow(clippy::match_same_arms)]
-    pub fn get_legal_targets(self) -> impl Iterator<Item = LegalTarget> {
-        match self.prototype {
+    pub fn get_legal_targets(self) -> LegalTarget {
+        let todo = match self.prototype {
             CardPrototype::Strike => [LegalTarget::Enemy],
+            CardPrototype::UltimateStrike => [LegalTarget::Enemy],
             CardPrototype::Defend => [LegalTarget::OwnPlayer],
+            CardPrototype::UltimateDefend => [LegalTarget::OwnPlayer],
             CardPrototype::Neutralize => [LegalTarget::Enemy],
             CardPrototype::Survivor => [LegalTarget::OwnPlayer],
             CardPrototype::PoisonedStab => [LegalTarget::Enemy],
@@ -314,6 +330,7 @@ impl Card {
             CardPrototype::Infection => [LegalTarget::OwnPlayer],
             CardPrototype::Wound => [LegalTarget::OwnPlayer],
             CardPrototype::Burn => [LegalTarget::OwnPlayer],
+            CardPrototype::Toxic => [LegalTarget::OwnPlayer],
             CardPrototype::Soot => [LegalTarget::OwnPlayer],
             CardPrototype::Greed => [LegalTarget::OwnPlayer],
             CardPrototype::PreciseCut => [LegalTarget::Enemy],
@@ -356,8 +373,11 @@ impl Card {
             CardPrototype::Blur => [LegalTarget::OwnPlayer],
             CardPrototype::SerpentForm => [LegalTarget::OwnPlayer],
             CardPrototype::Untouchable => [LegalTarget::OwnPlayer],
-        }
-        .into_iter()
+            CardPrototype::Slice => [LegalTarget::Enemy],
+            CardPrototype::FlickFlack => [LegalTarget::OwnPlayer],
+            CardPrototype::Snakebite => [LegalTarget::Enemy],
+        };
+        todo[0]
     }
 
     #[allow(clippy::match_same_arms)]
@@ -366,7 +386,9 @@ impl Card {
         use Rarity::*;
         match self.prototype {
             CardPrototype::Strike => Basic,
+            CardPrototype::UltimateStrike => Special,
             CardPrototype::Defend => Basic,
+            CardPrototype::UltimateDefend => Special,
             CardPrototype::Neutralize => Common,
             CardPrototype::Survivor => Common,
             CardPrototype::PoisonedStab => Common,
@@ -380,6 +402,7 @@ impl Card {
             CardPrototype::Infection => Special,
             CardPrototype::Wound => Special,
             CardPrototype::Burn => Special,
+            CardPrototype::Toxic => Special,
             CardPrototype::Soot => Special,
             CardPrototype::Greed => Special,
             CardPrototype::PreciseCut => Uncommon,
@@ -404,7 +427,7 @@ impl Card {
             CardPrototype::Slimed => Special,
             CardPrototype::Tactician => Uncommon,
             CardPrototype::DaggerSpray => Common,
-            CardPrototype::Acrobatics => Common,
+            CardPrototype::Acrobatics => Uncommon,
             CardPrototype::Ricochet => Common,
             CardPrototype::StormOfSteel => Rare,
             CardPrototype::Afterimage => Rare,
@@ -422,6 +445,9 @@ impl Card {
             CardPrototype::Blur => Uncommon,
             CardPrototype::SerpentForm => Rare,
             CardPrototype::Untouchable => Common,
+            CardPrototype::Slice => Common,
+            CardPrototype::FlickFlack => Common,
+            CardPrototype::Snakebite => Common,
         }
     }
 
@@ -459,6 +485,7 @@ impl Card {
             CardPrototype::PiercingWail => true,
             CardPrototype::Assassinate => true,
             CardPrototype::Adrenaline => true,
+            CardPrototype::Toxic => true,
             _ => false,
         }
     }
@@ -470,6 +497,7 @@ impl Card {
             CardPrototype::Tactician => true,
             CardPrototype::Ricochet => true,
             CardPrototype::Untouchable => true,
+            CardPrototype::FlickFlack => true,
             _ => false,
         }
     }
@@ -478,6 +506,13 @@ impl Card {
         match self.prototype {
             CardPrototype::Dazed => true,
             CardPrototype::AscendersBane => true,
+            _ => false,
+        }
+    }
+
+    pub fn has_retain(self) -> bool {
+        match self.prototype {
+            CardPrototype::Snakebite => true,
             _ => false,
         }
     }
@@ -492,19 +527,24 @@ pub enum Rarity {
     Special,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum LegalTarget {
     OwnPlayer,
     OtherPlayer,
     Enemy,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize, EnumIter,
+)]
 #[serde(rename_all(deserialize = "SCREAMING_SNAKE_CASE"))]
 pub enum CardPrototype {
     #[serde(alias = "STRIKE_SILENT")]
     Strike,
+    UltimateStrike,
     #[serde(alias = "DEFEND_SILENT")]
     Defend,
+    UltimateDefend,
     Neutralize,
     Survivor,
     PoisonedStab,
@@ -519,6 +559,7 @@ pub enum CardPrototype {
     Wound,
     Burn,
     Slimed,
+    Toxic,
     Soot,
     Greed,
     PreciseCut,
@@ -560,6 +601,9 @@ pub enum CardPrototype {
     Blur,
     SerpentForm,
     Untouchable,
+    Slice,
+    FlickFlack,
+    Snakebite,
 }
 
 impl CardPrototype {
@@ -577,7 +621,9 @@ impl CardPrototype {
         use CardKind::*;
         match self {
             Self::Strike => Attack,
+            Self::UltimateStrike => Attack,
             Self::Defend => Skill,
+            Self::UltimateDefend => Skill,
             Self::Neutralize => Attack,
             Self::Survivor => Skill,
             Self::PoisonedStab => Attack,
@@ -592,6 +638,7 @@ impl CardPrototype {
             Self::Infection => Status,
             Self::Wound => Status,
             Self::Burn => Status,
+            Self::Toxic => Status,
             Self::Soot => Status,
             Self::Greed => Curse,
             Self::Anticipate => Skill,
@@ -633,6 +680,9 @@ impl CardPrototype {
             Self::Blur => Skill,
             Self::SerpentForm => Power,
             Self::Untouchable => Skill,
+            Self::Slice => Attack,
+            Self::FlickFlack => Attack,
+            Self::Snakebite => Skill,
         }
     }
 }
