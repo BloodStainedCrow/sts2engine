@@ -108,6 +108,14 @@ impl UnorderedCardSet {
         for (card, _count) in &mut self.cards {
             card.upgraded = true;
         }
+
+        take_mut::take(self, |mut slf| {
+            let mut new: UnorderedCardSet = [].into_iter().collect();
+
+            new.append(&mut slf);
+
+            new
+        });
     }
 }
 
@@ -147,7 +155,20 @@ impl Hash for UnorderedCardSet {
 pub struct Card {
     pub prototype: CardPrototype,
     pub upgraded: bool,
+    pub energy_cost_offset: i8,
     pub enchantment: Option<CardEnchantment>,
+}
+
+impl Default for Card {
+    fn default() -> Self {
+        Self {
+            // TODO: Maybe use a temporary?
+            prototype: CardPrototype::Strike,
+            upgraded: Default::default(),
+            energy_cost_offset: Default::default(),
+            enchantment: Default::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Deserialize)]
@@ -222,8 +243,13 @@ impl Card {
         Self {
             prototype: self.prototype,
             upgraded: true,
+            energy_cost_offset: self.energy_cost_offset,
             enchantment: self.enchantment,
         }
+    }
+
+    pub fn get_rarity(self) -> Rarity {
+        self.prototype.get_rarity()
     }
 
     #[allow(clippy::match_same_arms)]
@@ -234,8 +260,6 @@ impl Card {
             (CardPrototype::UltimateStrike, _) => ENERGY[1],
             (CardPrototype::UltimateDefend, _) => ENERGY[1],
             (CardPrototype::Neutralize, _) => ENERGY[0],
-
-            // FIXME: DEBUG: Do not play Survivor since we cannot block yet
             (CardPrototype::Survivor, _) => ENERGY[1],
             (CardPrototype::PoisonedStab, _) => ENERGY[1],
             (CardPrototype::Backflip, _) => ENERGY[1],
@@ -244,6 +268,7 @@ impl Card {
             (CardPrototype::Footwork, _) => ENERGY[1],
             (CardPrototype::LegSweep, _) => ENERGY[2],
             (CardPrototype::AscendersBane, _) => ENERGY[0],
+            (CardPrototype::Injury, _) => ENERGY[0],
             (CardPrototype::Dazed, _) => ENERGY[0],
             (CardPrototype::Infection, _) => ENERGY[0],
             (CardPrototype::Wound, _) => ENERGY[0],
@@ -268,7 +293,7 @@ impl Card {
             (CardPrototype::Dash, _) => ENERGY[2],
             (CardPrototype::Burst, _) => ENERGY[1],
             (CardPrototype::BladeDance, _) => ENERGY[1],
-            (CardPrototype::FranticEscape, _) => todo!("The cost changes when its played!!!"),
+            (CardPrototype::FranticEscape, _) => ENERGY[1],
             (CardPrototype::Apotheosis, false) => ENERGY[2],
             (CardPrototype::Apotheosis, true) => ENERGY[1],
             (CardPrototype::Abrasive, _) => ENERGY[3],
@@ -298,15 +323,24 @@ impl Card {
             (CardPrototype::Slice, _) => ENERGY[0],
             (CardPrototype::FlickFlack, _) => ENERGY[1],
             (CardPrototype::Snakebite, _) => ENERGY[2],
+            (CardPrototype::Prepared, _) => ENERGY[0],
         };
 
-        if self.enchantment == Some(CardEnchantment::TezcatarasEmber) {
+        let post_enchantment_cost = if self.enchantment == Some(CardEnchantment::TezcatarasEmber) {
             Cost {
                 energy: CostVal::Val(0),
                 stars: cost_without_enchantment.stars,
             }
         } else {
             cost_without_enchantment
+        };
+
+        Cost {
+            energy: match post_enchantment_cost.energy {
+                CostVal::X => CostVal::X,
+                CostVal::Val(v) => CostVal::Val(v.strict_add_signed(self.energy_cost_offset)),
+            },
+            stars: post_enchantment_cost.stars,
         }
     }
 
@@ -326,6 +360,7 @@ impl Card {
             CardPrototype::Footwork => [LegalTarget::OwnPlayer],
             CardPrototype::LegSweep => [LegalTarget::Enemy],
             CardPrototype::AscendersBane => [LegalTarget::OwnPlayer],
+            CardPrototype::Injury => [LegalTarget::OwnPlayer],
             CardPrototype::Dazed => [LegalTarget::OwnPlayer],
             CardPrototype::Infection => [LegalTarget::OwnPlayer],
             CardPrototype::Wound => [LegalTarget::OwnPlayer],
@@ -376,79 +411,9 @@ impl Card {
             CardPrototype::Slice => [LegalTarget::Enemy],
             CardPrototype::FlickFlack => [LegalTarget::OwnPlayer],
             CardPrototype::Snakebite => [LegalTarget::Enemy],
+            CardPrototype::Prepared => [LegalTarget::OwnPlayer],
         };
         todo[0]
-    }
-
-    #[allow(clippy::match_same_arms)]
-    #[allow(clippy::enum_glob_use)]
-    pub fn get_rarity(self) -> Rarity {
-        use Rarity::*;
-        match self.prototype {
-            CardPrototype::Strike => Basic,
-            CardPrototype::UltimateStrike => Special,
-            CardPrototype::Defend => Basic,
-            CardPrototype::UltimateDefend => Special,
-            CardPrototype::Neutralize => Common,
-            CardPrototype::Survivor => Common,
-            CardPrototype::PoisonedStab => Common,
-            CardPrototype::Backflip => Common,
-            CardPrototype::DeadlyPoison => Common,
-            CardPrototype::CorrosiveWave => Rare,
-            CardPrototype::Footwork => Uncommon,
-            CardPrototype::LegSweep => Uncommon,
-            CardPrototype::AscendersBane => Special,
-            CardPrototype::Dazed => Special,
-            CardPrototype::Infection => Special,
-            CardPrototype::Wound => Special,
-            CardPrototype::Burn => Special,
-            CardPrototype::Toxic => Special,
-            CardPrototype::Soot => Special,
-            CardPrototype::Greed => Special,
-            CardPrototype::PreciseCut => Uncommon,
-            CardPrototype::Anticipate => Common,
-            CardPrototype::NoxiousFumes => Uncommon,
-            CardPrototype::Fasten => Uncommon,
-            CardPrototype::DodgeAndRoll => Common,
-            CardPrototype::Shiv => Common,
-            CardPrototype::CloakAndDagger => Common,
-            CardPrototype::LeadingStrike => Common,
-            CardPrototype::Tracking => Rare,
-            CardPrototype::SuckerPunch => Common,
-            CardPrototype::Haze => Uncommon,
-            CardPrototype::Accuracy => Uncommon,
-            CardPrototype::Squash => Special,
-            CardPrototype::Dash => Uncommon,
-            CardPrototype::Burst => Rare,
-            CardPrototype::BladeDance => Common,
-            CardPrototype::FranticEscape => Special,
-            CardPrototype::Apotheosis => Special,
-            CardPrototype::Abrasive => Rare,
-            CardPrototype::Slimed => Special,
-            CardPrototype::Tactician => Uncommon,
-            CardPrototype::DaggerSpray => Common,
-            CardPrototype::Acrobatics => Uncommon,
-            CardPrototype::Ricochet => Common,
-            CardPrototype::StormOfSteel => Rare,
-            CardPrototype::Afterimage => Rare,
-            CardPrototype::Backstab => Uncommon,
-            CardPrototype::Peck => Special,
-            CardPrototype::Flechettes => Uncommon,
-            CardPrototype::SpoilsMap => Special,
-            CardPrototype::PiercingWail => Common,
-            CardPrototype::Equilibrium => Uncommon,
-            CardPrototype::Deflect => Common,
-            CardPrototype::Assassinate => Rare,
-            CardPrototype::Adrenaline => Rare,
-            CardPrototype::Mayhem => Rare,
-            CardPrototype::Shadowmeld => Rare,
-            CardPrototype::Blur => Uncommon,
-            CardPrototype::SerpentForm => Rare,
-            CardPrototype::Untouchable => Common,
-            CardPrototype::Slice => Common,
-            CardPrototype::FlickFlack => Common,
-            CardPrototype::Snakebite => Common,
-        }
     }
 
     pub fn has_innate(self) -> bool {
@@ -464,6 +429,7 @@ impl Card {
     pub fn has_unplayable(self) -> bool {
         match self.prototype {
             CardPrototype::AscendersBane => true,
+            CardPrototype::Injury => true,
             CardPrototype::Dazed => true,
             CardPrototype::Infection => true,
             CardPrototype::Greed => true,
@@ -604,6 +570,8 @@ pub enum CardPrototype {
     Slice,
     FlickFlack,
     Snakebite,
+    Prepared,
+    Injury,
 }
 
 impl CardPrototype {
@@ -611,7 +579,81 @@ impl CardPrototype {
         Card {
             prototype: self,
             upgraded: false,
+            energy_cost_offset: 0,
             enchantment: None,
+        }
+    }
+
+    #[allow(clippy::match_same_arms)]
+    #[allow(clippy::enum_glob_use)]
+    pub fn get_rarity(self) -> Rarity {
+        use Rarity::*;
+        match self {
+            CardPrototype::Strike => Basic,
+            CardPrototype::UltimateStrike => Special,
+            CardPrototype::Defend => Basic,
+            CardPrototype::UltimateDefend => Special,
+            CardPrototype::Neutralize => Common,
+            CardPrototype::Survivor => Common,
+            CardPrototype::PoisonedStab => Common,
+            CardPrototype::Backflip => Common,
+            CardPrototype::DeadlyPoison => Common,
+            CardPrototype::CorrosiveWave => Rare,
+            CardPrototype::Footwork => Uncommon,
+            CardPrototype::LegSweep => Uncommon,
+            CardPrototype::AscendersBane => Special,
+            CardPrototype::Injury => Special,
+            CardPrototype::Dazed => Special,
+            CardPrototype::Infection => Special,
+            CardPrototype::Wound => Special,
+            CardPrototype::Burn => Special,
+            CardPrototype::Toxic => Special,
+            CardPrototype::Soot => Special,
+            CardPrototype::Greed => Special,
+            CardPrototype::PreciseCut => Uncommon,
+            CardPrototype::Anticipate => Common,
+            CardPrototype::NoxiousFumes => Uncommon,
+            CardPrototype::Fasten => Uncommon,
+            CardPrototype::DodgeAndRoll => Common,
+            CardPrototype::Shiv => Common,
+            CardPrototype::CloakAndDagger => Common,
+            CardPrototype::LeadingStrike => Common,
+            CardPrototype::Tracking => Rare,
+            CardPrototype::SuckerPunch => Common,
+            CardPrototype::Haze => Uncommon,
+            CardPrototype::Accuracy => Uncommon,
+            CardPrototype::Squash => Special,
+            CardPrototype::Dash => Uncommon,
+            CardPrototype::Burst => Rare,
+            CardPrototype::BladeDance => Common,
+            CardPrototype::FranticEscape => Special,
+            CardPrototype::Apotheosis => Special,
+            CardPrototype::Abrasive => Rare,
+            CardPrototype::Slimed => Special,
+            CardPrototype::Tactician => Uncommon,
+            CardPrototype::DaggerSpray => Common,
+            CardPrototype::Acrobatics => Uncommon,
+            CardPrototype::Ricochet => Common,
+            CardPrototype::StormOfSteel => Rare,
+            CardPrototype::Afterimage => Rare,
+            CardPrototype::Backstab => Uncommon,
+            CardPrototype::Peck => Special,
+            CardPrototype::Flechettes => Uncommon,
+            CardPrototype::SpoilsMap => Special,
+            CardPrototype::PiercingWail => Common,
+            CardPrototype::Equilibrium => Uncommon,
+            CardPrototype::Deflect => Common,
+            CardPrototype::Assassinate => Rare,
+            CardPrototype::Adrenaline => Rare,
+            CardPrototype::Mayhem => Rare,
+            CardPrototype::Shadowmeld => Rare,
+            CardPrototype::Blur => Uncommon,
+            CardPrototype::SerpentForm => Rare,
+            CardPrototype::Untouchable => Common,
+            CardPrototype::Slice => Common,
+            CardPrototype::FlickFlack => Common,
+            CardPrototype::Snakebite => Common,
+            CardPrototype::Prepared => Common,
         }
     }
 
@@ -634,6 +676,7 @@ impl CardPrototype {
             Self::LegSweep => Skill,
             Self::PreciseCut => Attack,
             Self::AscendersBane => Curse,
+            Self::Injury => Curse,
             Self::Dazed => Status,
             Self::Infection => Status,
             Self::Wound => Status,
@@ -683,6 +726,7 @@ impl CardPrototype {
             Self::Slice => Attack,
             Self::FlickFlack => Attack,
             Self::Snakebite => Skill,
+            Self::Prepared => Skill,
         }
     }
 }

@@ -9,9 +9,11 @@ use std::{
 use itertools::Itertools;
 use rapidhash::{HashMapExt, RapidHashMap};
 
+use crate::distribution::DistributionFamily;
+
 #[derive(Debug, Clone)]
 pub struct Distribution<Value> {
-    entries: Vec<(Value, f32)>,
+    pub(crate) entries: Vec<(Value, f32)>,
 }
 
 impl<Value> MulAssign<f32> for Distribution<Value> {
@@ -22,10 +24,14 @@ impl<Value> MulAssign<f32> for Distribution<Value> {
     }
 }
 
-impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
+pub struct FullFamily;
+impl DistributionFamily for FullFamily {
     const IS_SIZE_SENSITIVE: bool = true;
+    type Distribution<T: 'static> = Distribution<T>;
+}
 
-    type Inner<V: 'static> = Distribution<V>;
+impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
+    type Family = FullFamily;
 
     fn single_value(value: Value) -> Self {
         Self {
@@ -101,7 +107,10 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
         self.entries.retain(|(v, _)| (filter)(v));
     }
 
-    fn map<T: 'static>(self, mut fun: impl FnMut(Value) -> T) -> Self::Inner<T> {
+    fn map<T: 'static>(
+        self,
+        mut fun: impl FnMut(Value) -> T,
+    ) -> <Self::Family as DistributionFamily>::Distribution<T> {
         let Self { entries } = self;
 
         Distribution {
@@ -112,7 +121,10 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
         }
     }
 
-    fn flat_map<T: 'static>(self, mut fun: impl FnMut(Value) -> Self::Inner<T>) -> Self::Inner<T> {
+    fn flat_map<T: 'static>(
+        self,
+        mut fun: impl FnMut(Value) -> <Self::Family as DistributionFamily>::Distribution<T>,
+    ) -> <Self::Family as DistributionFamily>::Distribution<T> {
         let Self { mut entries } = self;
 
         if entries.len() == 1 {
@@ -166,6 +178,10 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
         self.entries.into_iter().map(|(v, _)| v)
     }
 
+    fn into_values_and_odds(self) -> impl Iterator<Item = (Value, f32)> {
+        self.entries.into_iter()
+    }
+
     fn iter_with_odds(&self) -> impl Iterator<Item = (&Value, f32)> {
         self.entries.iter().map(|(a, b)| (a, *b))
     }
@@ -211,7 +227,7 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
         self.entries.iter().map(|(v, chance)| *v * *chance).sum()
     }
 
-    fn flatten<T: 'static>(self) -> Self::Inner<T>
+    fn flatten<T: 'static>(self) -> <Self::Family as DistributionFamily>::Distribution<T>
     where
         Value: super::Distribution<T>,
     {
@@ -220,7 +236,7 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
                 .entries
                 .into_iter()
                 .flat_map(|(v, odds)| {
-                    v.into_iter()
+                    v.into_values_and_odds()
                         .map(move |(inner, inner_chance)| (inner, inner_chance * odds))
                 })
                 .collect(),
@@ -229,9 +245,9 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
 
     fn cartesian_product<T: 'static + Clone, U: 'static>(
         self,
-        other: Self::Inner<T>,
+        other: <Self::Family as DistributionFamily>::Distribution<T>,
         mut fun: impl FnMut(Value, T) -> U,
-    ) -> Self::Inner<U>
+    ) -> <Self::Family as DistributionFamily>::Distribution<U>
     where
         Value: Clone,
     {
@@ -262,7 +278,7 @@ impl<Value: 'static> IntoIterator for Distribution<Value> {
 impl<Value: 'static> super::Flatten<Value, Distribution<Value>>
     for Distribution<Distribution<Value>>
 {
-    fn flatten(self) -> Self::Inner<Value> {
+    fn flatten(self) -> <Self::Family as DistributionFamily>::Distribution<Value> {
         let Self { entries } = self;
 
         // Note: This does not deduplicate

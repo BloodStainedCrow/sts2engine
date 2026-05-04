@@ -6,6 +6,8 @@ use std::{
     ops::{Mul, MulAssign},
 };
 
+use crate::distribution::DistributionFamily;
+
 #[derive(Debug, Clone)]
 pub struct Distribution<Value> {
     value: Value,
@@ -44,10 +46,14 @@ where
     Some(result)
 }
 
-impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
+pub struct SingleFamily;
+impl DistributionFamily for SingleFamily {
     const IS_SIZE_SENSITIVE: bool = false;
+    type Distribution<T: 'static> = Distribution<T>;
+}
 
-    type Inner<V: 'static> = Distribution<V>;
+impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
+    type Family = SingleFamily;
 
     fn single_value(value: Value) -> Self {
         Self { value }
@@ -140,6 +146,10 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
         iter::once(self.value)
     }
 
+    fn into_values_and_odds(self) -> impl Iterator<Item = (Value, f32)> {
+        iter::once((self.value, 1.0))
+    }
+
     fn iter_with_odds(&self) -> impl Iterator<Item = (&Value, f32)> {
         iter::once((&self.value, 1.0))
     }
@@ -170,7 +180,7 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
         self.value
     }
 
-    fn flatten<T: 'static>(self) -> Self::Inner<T>
+    fn flatten<T: 'static>(self) -> <Self::Family as DistributionFamily>::Distribution<T>
     where
         Value: super::Distribution<T>,
     {
@@ -181,9 +191,9 @@ impl<Value: 'static> super::Distribution<Value> for Distribution<Value> {
 
     fn cartesian_product<T: 'static + Clone, U: 'static>(
         self,
-        other: Self::Inner<T>,
+        other: <Self::Family as DistributionFamily>::Distribution<T>,
         mut fun: impl FnMut(Value, T) -> U,
-    ) -> Self::Inner<U>
+    ) -> <Self::Family as DistributionFamily>::Distribution<U>
     where
         Value: Clone,
     {
@@ -201,6 +211,12 @@ impl<Value: 'static> From<super::full::Distribution<Value>> for Distribution<Val
     }
 }
 
+impl<Value: 'static> From<Distribution<Value>> for super::full::Distribution<Value> {
+    fn from(value: Distribution<Value>) -> Self {
+        super::Distribution::<Value>::single_value(value.value)
+    }
+}
+
 impl<Value: 'static> IntoIterator for Distribution<Value> {
     type Item = (Value, f32);
 
@@ -214,7 +230,7 @@ impl<Value: 'static> IntoIterator for Distribution<Value> {
 impl<Value: 'static> super::Flatten<Value, Distribution<Value>>
     for Distribution<Distribution<Value>>
 {
-    fn flatten(self) -> Self::Inner<Value> {
+    fn flatten(self) -> <Self::Family as DistributionFamily>::Distribution<Value> {
         let Self { value } = self;
 
         Distribution { value: value.value }

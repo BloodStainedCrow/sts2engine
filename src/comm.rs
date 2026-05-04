@@ -7,9 +7,11 @@ use strum::IntoEnumIterator;
 use crate::{
     combat_action::CombatAction,
     combat_state::{
-        self, CombatState, Enemy, EnemyAction, EnemyPrototype, Player, RunInfo, Status,
+        self, CombatState, Enemy, EnemyAction, Player, RunInfo, Status,
         cards::{Card, CardEnchantment, CardPrototype, UnorderedCardSet},
         encounter::EncounterPrototype,
+        enemy::EnemyPrototype,
+        relics::FullRelicState,
     },
     distribution::{self, Distribution},
 };
@@ -52,6 +54,8 @@ impl Comm {
                     encounter_prototype,
                     combat_state::CombatState::get_starting_states::<
                         distribution::full::Distribution<_>,
+                        FullRelicState,
+                        _,
                     >(
                         encounter_prototype,
                         &RunInfo {
@@ -95,7 +99,7 @@ impl Comm {
             .expect("There will always be at least one encounter prototype")
     }
 
-    pub fn get_run_state(&mut self) -> RunInfo {
+    pub fn get_run_state(&mut self) -> RunInfo<FullRelicState, Vec<Card>> {
         use combat_state::relics::RelicPrototype::*;
         RunInfo {
             hp: self.rcon.get_hp(),
@@ -107,19 +111,20 @@ impl Comm {
                 .map(|card| Card {
                     prototype: card.kind,
                     upgraded: card.upgraded,
+                    energy_cost_offset: todo!("card cost change"),
                     enchantment: card.enchantment,
                 })
-                .collect(),
+                .collect::<Vec<_>>(),
             relic_state: [
-                RingOfTheSnake,
-                Vajra,
-                OddlySmoothStone,
-                MeatOnTheBone,
-                HornCleat,
-                MrStruggles,
-                BagOfMarbles,
-                Candelabra,
-                Sai,
+                (RingOfTheSnake, 0),
+                (Vajra, 0),
+                (OddlySmoothStone, 0),
+                (MeatOnTheBone, 0),
+                (HornCleat, 0),
+                (MrStruggles, 0),
+                (BagOfMarbles, 0),
+                (Candelabra, 0),
+                (Sai, 0),
             ]
             .into_iter()
             .collect(),
@@ -416,6 +421,11 @@ impl EnemyInfo {
             crate::combat_state::EnemyAction::ShuffleCards { count, .. } => self
                 .intent
                 .contains(&IntentInfo::StatusCard { count: *count }),
+            // TODO: This is currently only used on the doormaker so prob fine
+            crate::combat_state::EnemyAction::Transform { .. } => true,
+
+            // This is not shown to the player afaik
+            crate::combat_state::EnemyAction::AddAttackRepeats { .. } => true,
         }) {
             dbg!((enemy.prototype, intent));
             return false;

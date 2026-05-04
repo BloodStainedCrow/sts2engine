@@ -1,6 +1,6 @@
 use enum_map::{Enum, EnumMap};
 
-#[derive(Debug, Clone, Copy, Enum, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, Copy, Enum, PartialEq, Eq, Hash, serde::Deserialize)]
 pub enum RelicPrototype {
     RingOfTheSnake,
     RingOfTheDrake,
@@ -63,6 +63,23 @@ pub enum RelicPrototype {
     SneckoSkull,
     MeatOnTheBone,
     Sai,
+    HeftyTablet,
+    LargeCapsule,
+    LeafyPoultice,
+    PrecariousShears,
+    ScrollBoxes,
+    NeowsBones,
+    SilverCrucible,
+    LeadPaperweight,
+    NeowsTorment,
+    PhialHolster,
+    WingedBoots,
+    ArcaneScroll,
+    NewLeaf,
+    PreciseScissors,
+    LavaRock,
+    SmallCapsule,
+    NeowsTalisman,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -70,12 +87,12 @@ pub struct FullRelicState {
     numbers: EnumMap<RelicPrototype, u8>,
 }
 
-impl FromIterator<RelicPrototype> for FullRelicState {
-    fn from_iter<T: IntoIterator<Item = RelicPrototype>>(iter: T) -> Self {
+impl FromIterator<(RelicPrototype, u8)> for FullRelicState {
+    fn from_iter<T: IntoIterator<Item = (RelicPrototype, u8)>>(iter: T) -> Self {
         let mut ret = Self::default();
 
-        for proto in iter {
-            ret.numbers[proto] = 0;
+        for (proto, value) in iter {
+            ret.numbers[proto] = value;
         }
 
         ret
@@ -113,5 +130,11 @@ impl FullRelicState {
         let val = self.numbers[relic];
 
         val != u8::MAX
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (RelicPrototype, u8)> {
+        self.numbers
+            .iter()
+            .filter_map(|(relic, &v)| (v != u8::MAX).then_some((relic, v)))
     }
 }

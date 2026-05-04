@@ -1,10 +1,12 @@
+use std::cmp::Ordering;
+
 use enum_map::{Enum, EnumMap};
 use strum::{Display, EnumIter};
 
 use crate::combat_state::cards::Rarity;
 
 #[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Enum, EnumIter)]
-enum Distribution {
+enum CardRarityDistribution {
     Regular,
     Elite,
     Boss,
@@ -12,7 +14,7 @@ enum Distribution {
     Uniform,
 }
 
-const BASE_ODDS: EnumMap<Distribution, EnumMap<Rarity, f32>> = EnumMap::from_array([
+const BASE_ODDS: EnumMap<CardRarityDistribution, EnumMap<Rarity, f32>> = EnumMap::from_array([
     //      Basic, Common, Uncommon, Rare, Special
 
     // Regular
@@ -27,7 +29,7 @@ const BASE_ODDS: EnumMap<Distribution, EnumMap<Rarity, f32>> = EnumMap::from_arr
     EnumMap::from_array([0.0, 0.33, 0.33, 0.33, 0.0]),
 ]);
 
-const BASE_ODDS_SCARCITY_ASCENSION: EnumMap<Distribution, EnumMap<Rarity, f32>> =
+const BASE_ODDS_SCARCITY_ASCENSION: EnumMap<CardRarityDistribution, EnumMap<Rarity, f32>> =
     EnumMap::from_array([
         //      Basic, Common, Uncommon, Rare, Special
 
@@ -48,14 +50,37 @@ const MAX_PITY: f32 = 0.4;
 const PITY_RARITY_GROWTH: f32 = 0.01;
 const PITY_RARITY_GROWTH_SCARCITY_ASCENSION: f32 = 0.005;
 
-struct CardRarityOdds {
+#[derive(Debug, Clone)]
+pub struct CardRarityOdds {
     current_pity_rare_offset: f32,
+}
+
+impl Default for CardRarityOdds {
+    fn default() -> Self {
+        Self {
+            current_pity_rare_offset: BASE_PITY,
+        }
+    }
+}
+
+impl PartialEq for CardRarityOdds {
+    fn eq(&self, other: &Self) -> bool {
+        self.current_pity_rare_offset
+            .total_cmp(&other.current_pity_rare_offset)
+            == Ordering::Equal
+    }
+}
+impl Eq for CardRarityOdds {}
+impl std::hash::Hash for CardRarityOdds {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.current_pity_rare_offset.to_bits().hash(state);
+    }
 }
 
 impl CardRarityOdds {
     pub fn roll_with_pity_and_advance_on_fail(
         &mut self,
-        distribution: Distribution,
+        distribution: CardRarityDistribution,
         scarcity_active: bool,
     ) -> Rarity {
         let result = self.roll_with_pity_without_changing_pity(distribution, scarcity_active);
@@ -85,10 +110,10 @@ impl CardRarityOdds {
 
     pub fn roll_with_pity_without_changing_pity(
         &self,
-        distribution: Distribution,
+        distribution: CardRarityDistribution,
         scarcity_active: bool,
     ) -> Rarity {
-        if distribution == Distribution::Boss {
+        if distribution == CardRarityDistribution::Boss {
             // Pity does not affect boss rewards
             Self::roll_with_rare_chance_offset(distribution, scarcity_active, 0.0)
         } else {
@@ -103,7 +128,7 @@ impl CardRarityOdds {
 
     // Roll functions are only for reference
     fn roll_with_rare_chance_offset(
-        distribution: Distribution,
+        distribution: CardRarityDistribution,
         scarcity_active: bool,
         rare_chance_offset: f32,
     ) -> Rarity {
@@ -125,7 +150,11 @@ impl CardRarityOdds {
     }
 }
 
-fn get_base_odds(distribution: Distribution, rarity: Rarity, scarcity_active: bool) -> f32 {
+fn get_base_odds(
+    distribution: CardRarityDistribution,
+    rarity: Rarity,
+    scarcity_active: bool,
+) -> f32 {
     if scarcity_active {
         BASE_ODDS_SCARCITY_ASCENSION[distribution][rarity]
     } else {
@@ -169,7 +198,7 @@ mod test {
 
                 (pity_count, capped)
             })
-            .cartesian_product(Distribution::iter())
+            .cartesian_product(CardRarityDistribution::iter())
             .par_bridge()
             .map(|((pity_count, pity_value), distribution)| {
                 let odds = CardRarityOdds {
@@ -229,7 +258,7 @@ mod test {
 
                 (pity_count, capped)
             })
-            .cartesian_product(Distribution::iter())
+            .cartesian_product(CardRarityDistribution::iter())
             .par_bridge()
             .map(|((pity_count, pity_value), distribution)| {
                 let odds = CardRarityOdds {

@@ -1,5 +1,8 @@
 #![feature(iterator_try_collect)]
 #![feature(allocator_api)]
+#![feature(vec_try_remove)]
+#![feature(never_type)]
+#![feature(associated_type_defaults)]
 
 use mimalloc::MiMalloc;
 use sts2mcts::mcts::ParMCTS;
@@ -128,9 +131,6 @@ fn main() {
     run_mcts();
 }
 
-// TODO(BSC): Huge TODO, profiling revealed around 20% of runtime being in memcpy due to LLVM not optimizing the moves for all the CombatState function, which take the State by value and return it
-//                       (wrapped in Distribution::single). This causes lots of memcpy calls many of which LLVM seems to be unable to remove
-
 fn run_mcts() {
     dbg!(size_of::<CombatState>());
     dbg!(size_of::<Player>());
@@ -141,7 +141,9 @@ fn run_mcts() {
     let mut comm = Comm::new();
     loop {
         let pre_first_turn_state = combat_state::CombatState::get_starting_states::<
-            distribution::full::Distribution<_>,
+            FullFamily,
+            _,
+            _,
         >(comm.guess_encounter(), &comm.get_run_state(), |hps| {
             comm.filter_hp(hps)
         });
@@ -209,41 +211,46 @@ fn run_expectimax() {
     use combat_state::relics::RelicPrototype::*;
 
     // TODO: Assume specific fight
-    let pre_first_turn_state =
-        combat_state::CombatState::get_starting_states::<distribution::full::Distribution<_>>(
-            combat_state::encounter::EncounterPrototype::RubyRaiders,
-            &RunInfo {
-                hp: 68,
-                max_hp: 70,
-                deck: vec![
-                    CardPrototype::Strike.get_normal_card(),
-                    CardPrototype::Strike.get_normal_card(),
-                    CardPrototype::Strike.get_normal_card(),
-                    CardPrototype::Strike.get_normal_card(),
-                    CardPrototype::Strike.get_normal_card(),
-                    CardPrototype::Defend.get_normal_card(),
-                    CardPrototype::Defend.get_normal_card(),
-                    CardPrototype::Defend.get_normal_card(),
-                    CardPrototype::Defend.get_normal_card(),
-                    CardPrototype::Defend.get_normal_card(),
-                    Card {
-                        prototype: CardPrototype::Neutralize,
-                        upgraded: true,
-                        enchantment: None,
-                    },
-                    CardPrototype::Survivor.get_normal_card(),
-                    CardPrototype::DodgeAndRoll.get_normal_card(),
-                    Card {
-                        prototype: CardPrototype::DaggerSpray,
-                        upgraded: true,
-                        enchantment: None,
-                    },
-                ],
-                relic_state: [RingOfTheSnake, Pomander].into_iter().collect(),
-            },
-            |hp| hp == [23, 22, 30],
-            // |_| true,
-        );
+    let pre_first_turn_state = combat_state::CombatState::get_starting_states::<
+        distribution::full::Distribution<_>,
+        &FullRelicState,
+        &[Card],
+    >(
+        combat_state::encounter::EncounterPrototype::RubyRaiders,
+        &RunInfo {
+            hp: 68,
+            max_hp: 70,
+            deck: &[
+                CardPrototype::Strike.get_normal_card(),
+                CardPrototype::Strike.get_normal_card(),
+                CardPrototype::Strike.get_normal_card(),
+                CardPrototype::Strike.get_normal_card(),
+                CardPrototype::Strike.get_normal_card(),
+                CardPrototype::Defend.get_normal_card(),
+                CardPrototype::Defend.get_normal_card(),
+                CardPrototype::Defend.get_normal_card(),
+                CardPrototype::Defend.get_normal_card(),
+                CardPrototype::Defend.get_normal_card(),
+                Card {
+                    prototype: CardPrototype::Neutralize,
+                    upgraded: true,
+
+                    ..Card::default()
+                },
+                CardPrototype::Survivor.get_normal_card(),
+                CardPrototype::DodgeAndRoll.get_normal_card(),
+                Card {
+                    prototype: CardPrototype::DaggerSpray,
+                    upgraded: true,
+
+                    ..Card::default()
+                },
+            ],
+            relic_state: &[(RingOfTheSnake, 0), (Pomander, 0)].into_iter().collect(),
+        },
+        |hp| hp == [23, 22, 30],
+        // |_| true,
+    );
 
     let mut state = pre_first_turn_state;
 
@@ -284,7 +291,7 @@ fn run_expectimax() {
 
 #[cfg(test)]
 mod test {
-    use std::{iter::once, time::Duration};
+    use std::{borrow::Borrow, iter::once, time::Duration};
 
     use rayon::iter::{IntoParallelIterator, ParallelIterator};
     use strum::IntoEnumIterator;
@@ -294,14 +301,14 @@ mod test {
         combat_state::{
             self, RunInfo,
             cards::{Card, CardPrototype},
-            encounter::{Act, EncounterPrototype},
-            relics::RelicPrototype,
+            encounter::EncounterPrototype,
+            relics::{FullRelicState, RelicPrototype},
         },
         distribution::{self, Distribution},
     };
 
     fn eval_across_encounters(
-        run_state: &RunInfo,
+        run_state: &RunInfo<FullRelicState, Vec<Card>>,
         encounter_filter: impl Fn(&EncounterPrototype) -> bool,
     ) -> f32 {
         let num_starts_per_encounter = rayon::current_num_threads();
@@ -313,17 +320,19 @@ mod test {
             .filter(|e| (encounter_filter)(e))
         {
             dbg!(encounter);
-            total_eval += (0..num_starts_per_encounter)
+            total_eval += (0..1)
                 .into_par_iter()
                 .map(|_| {
                     let starting_state = combat_state::CombatState::get_starting_states::<
                         distribution::single::Distribution<_>,
+                        _,
+                        _,
                     >(encounter, run_state, |_hps| true)
                     .collapse();
 
                     let mut engine = MCTS::new(starting_state);
 
-                    engine.search(Duration::from_secs(1));
+                    engine.search(Duration::from_secs_f64(0.1));
 
                     engine.expected_eval()
                 })
@@ -363,61 +372,56 @@ mod test {
                 CardPrototype::Blur.get_normal_card(),
             ],
             relic_state: [
-                RelicPrototype::RingOfTheDrake,
-                RelicPrototype::Vajra,
-                RelicPrototype::OddlySmoothStone,
-                RelicPrototype::MeatOnTheBone,
-                RelicPrototype::HornCleat,
-                RelicPrototype::MrStruggles,
-                RelicPrototype::BagOfMarbles,
-                RelicPrototype::Candelabra,
-                RelicPrototype::Sai,
+                (RelicPrototype::RingOfTheDrake, 0),
+                (RelicPrototype::Vajra, 0),
+                (RelicPrototype::OddlySmoothStone, 0),
+                (RelicPrototype::MeatOnTheBone, 0),
+                (RelicPrototype::HornCleat, 0),
+                (RelicPrototype::MrStruggles, 0),
+                (RelicPrototype::BagOfMarbles, 0),
+                (RelicPrototype::Candelabra, 0),
+                (RelicPrototype::Sai, 0),
             ]
             .into_iter()
             .collect(),
         };
 
         let past_encounters = [
-            EncounterPrototype::ShrinkerBeetle,
-            EncounterPrototype::SlimesWeak,
-            EncounterPrototype::SingleNibbit,
-            EncounterPrototype::FuzzyWurmCrawler,
-            EncounterPrototype::PhrogParasite,
-            EncounterPrototype::BygoneEffigy,
-            EncounterPrototype::Byrdonis,
-            EncounterPrototype::Vantom,
-            EncounterPrototype::DoubleNibbit,
-            EncounterPrototype::BeetleAndFuzzy,
-            EncounterPrototype::SingleCubexConstruct,
-            EncounterPrototype::RubyRaiders,
-            EncounterPrototype::TheKin,
-            EncounterPrototype::SoloTunneler,
-            EncounterPrototype::BowlbugsWeak,
-            EncounterPrototype::BowlbugsStrong,
-            EncounterPrototype::InfestedPrism,
-            EncounterPrototype::SpinyToad,
-            EncounterPrototype::Entomancer,
-            EncounterPrototype::DevotedSculptor,
-            EncounterPrototype::TurretOperator,
-            EncounterPrototype::SoulNexus,
-            EncounterPrototype::OwlMagistrate,
-            EncounterPrototype::MechaKnight,
-            EncounterPrototype::Knights,
-            EncounterPrototype::SlimedBerserker,
-            EncounterPrototype::ConstructGang,
+            // EncounterPrototype::ShrinkerBeetle,
+            // EncounterPrototype::SlimesWeak,
+            // EncounterPrototype::SingleNibbit,
+            // EncounterPrototype::FuzzyWurmCrawler,
+            // EncounterPrototype::PhrogParasite,
+            // EncounterPrototype::BygoneEffigy,
+            // EncounterPrototype::Byrdonis,
+            // EncounterPrototype::Vantom,
+            // EncounterPrototype::DoubleNibbit,
+            // EncounterPrototype::BeetleAndFuzzy,
+            // EncounterPrototype::SingleCubexConstruct,
+            // EncounterPrototype::RubyRaiders,
+            // EncounterPrototype::TheKin,
+            // EncounterPrototype::SoloTunneler,
+            // EncounterPrototype::BowlbugsWeak,
+            // EncounterPrototype::BowlbugsStrong,
+            // EncounterPrototype::InfestedPrism,
+            // EncounterPrototype::SpinyToad,
+            // EncounterPrototype::Entomancer,
+            // EncounterPrototype::DevotedSculptor,
+            // EncounterPrototype::TurretOperator,
+            // EncounterPrototype::SoulNexus,
+            // EncounterPrototype::OwlMagistrate,
+            // EncounterPrototype::MechaKnight,
+            // EncounterPrototype::Knights,
+            // EncounterPrototype::SlimedBerserker,
+            // EncounterPrototype::ConstructGang,
         ];
 
-        let cards: [Vec<_>; _] = [
-            vec![],
-            vec![CardPrototype::Acrobatics.get_normal_card().upgraded()],
-            // vec![CardPrototype::DeadlyPoison.get_normal_card().upgraded()],
-            // vec![CardPrototype::Untouchable.get_normal_card().upgraded()],
-        ];
+        // let cards: [Vec<_>; _] = [vec![CardPrototype::Apotheosis.get_normal_card().upgraded()]];
 
-        // let cards: Vec<Vec<_>> = CardPrototype::iter()
-        //     .filter(|c| *c != CardPrototype::FranticEscape)
-        //     .map(|p| vec![p.get_normal_card()])
-        //     .collect();
+        let cards: Vec<Vec<_>> = CardPrototype::iter()
+            .filter(|c| *c != CardPrototype::FranticEscape)
+            .map(|p| vec![p.get_normal_card()])
+            .collect();
 
         let best_card = cards
             .into_iter()
@@ -425,14 +429,13 @@ mod test {
                 let mut state = run_state.clone();
 
                 for card in &card {
+                    dbg!(card);
                     state.deck.push(*card);
                 }
 
                 (
                     card,
-                    eval_across_encounters(&state, |e| {
-                        e.get_act() == Act::Glory && !past_encounters.contains(e)
-                    }),
+                    eval_across_encounters(&state, |e| !past_encounters.contains(e)),
                 )
             })
             .max_by(|a, b| a.1.total_cmp(&b.1))

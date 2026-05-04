@@ -9,12 +9,12 @@ use sts2mcts::mcts;
 use crate::{
     combat_action::CombatAction,
     combat_state::{CombatSide, CombatState, Player},
-    distribution::{Distribution, single},
+    distribution::{Distribution, single::SingleFamily},
 };
 
 #[derive(Debug, Clone, Copy)]
 pub struct Eval {
-    v: f32,
+    pub v: f32,
 }
 
 impl mcts::Eval for Eval {
@@ -117,13 +117,14 @@ impl mcts::GameState for CombatState {
             self,
             || CombatState {
                 turn_counter: 0,
+                died_to_sandpit: false,
                 current_turn_side: CombatSide::Player,
                 player: Box::new(Player::default()),
                 enemies: vec![].into(),
                 relic_state: [].into_iter().collect(),
             },
             |state| {
-                CombatState::apply::<single::Distribution<CombatState>>(state, *action).collapse()
+                CombatState::apply::<SingleFamily>(state, *action).collapse()
             },
         );
     }

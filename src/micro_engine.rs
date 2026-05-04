@@ -838,9 +838,10 @@ mod test {
             turn_counter: 0,
             player: Box::new(Player::default()),
             current_turn_side: combat_state::CombatSide::Player,
+            died_to_sandpit: false,
             enemies: vec![
                 Enemy {
-                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::enemy::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 49,
                         max_hp: 55,
@@ -855,7 +856,7 @@ mod test {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
-                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::enemy::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 49,
                         max_hp: 55,
@@ -877,9 +878,10 @@ mod test {
             turn_counter: 0,
             player: Box::new(Player::default()),
             current_turn_side: combat_state::CombatSide::Player,
+            died_to_sandpit: false,
             enemies: vec![
                 Enemy {
-                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::enemy::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 43,
                         max_hp: 55,
@@ -894,7 +896,7 @@ mod test {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
-                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::enemy::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 55,
                         max_hp: 55,
@@ -920,9 +922,10 @@ mod test {
             turn_counter: 0,
             player: Box::new(Player::default()),
             current_turn_side: combat_state::CombatSide::Player,
+            died_to_sandpit: false,
             enemies: vec![
                 Enemy {
-                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::enemy::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 49,
                         max_hp: 55,
@@ -937,7 +940,7 @@ mod test {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
-                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::enemy::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 49,
                         max_hp: 55,
@@ -959,9 +962,10 @@ mod test {
             turn_counter: 0,
             player: Box::new(Player::default()),
             current_turn_side: combat_state::CombatSide::Player,
+            died_to_sandpit: false,
             enemies: vec![
                 Enemy {
-                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::enemy::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 43,
                         max_hp: 55,
@@ -976,7 +980,7 @@ mod test {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
-                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::enemy::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 55,
                         max_hp: 55,
@@ -1006,9 +1010,10 @@ mod test {
             turn_counter: 0,
             player: Box::new(Player::default()),
             current_turn_side: combat_state::CombatSide::Player,
+            died_to_sandpit: false,
             enemies: vec![
                 Enemy {
-                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::enemy::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 49,
                         max_hp: 55,
@@ -1023,7 +1028,7 @@ mod test {
                     has_taken_unblocked_attack_damage_this_turn: false,
                 },
                 Enemy {
-                    prototype: combat_state::EnemyPrototype::FuzzyWurmCrawler,
+                    prototype: combat_state::enemy::EnemyPrototype::FuzzyWurmCrawler,
                     creature: Creature {
                         hp: 55,
                         max_hp: 55,

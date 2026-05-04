@@ -1,16 +1,22 @@
+use std::borrow::Borrow;
+
 use enum_map::EnumMap;
 use itertools::{Itertools, iproduct};
 use strum::EnumIter;
 
+use crate::combat_state::relics::FullRelicState;
+use crate::distribution::DistributionFamily;
+use crate::run_state::ActPrototype;
+use crate::run_state::encounter_generation::EncounterKind;
 use crate::{
     combat_state::{
-        CharacterIndex, CombatState, Creature, Enemy, EnemyPrototype, EnemyStateMachine, Player,
-        RelicPrototype, RunInfo, Status,
+        CharacterIndex, CombatState, Creature, Enemy, EnemyStateMachine, Player, RelicPrototype,
+        RunInfo, Status, cards::Card, enemy::EnemyPrototype,
     },
-    distribution,
+    distribution::Distribution,
 };
 
-#[derive(Debug, Clone, Copy, EnumIter, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, EnumIter, PartialEq, Eq, Hash)]
 pub enum EncounterPrototype {
     FuzzyWurmCrawler,
     SingleNibbit,
@@ -29,7 +35,6 @@ pub enum EncounterPrototype {
     BowlbugsWeak,
     BowlbugsStrong,
     SoloTunneler,
-    // TODO: Exoskeletons have rules like "after X always use Y", which I do not support yet
     ExoskeletonWeak,
     ExoskeletonStrong,
     Mytes,
@@ -53,38 +58,25 @@ pub enum EncounterPrototype {
     ConstructGang,
     Queen,
     TestSubject,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Act {
-    Overgrowth,
-    Underdocks,
-    Hive,
-    Glory,
+    Doormaker,
 }
 
 impl EncounterPrototype {
     pub fn is_finished_implementing(self) -> bool {
         match self {
-            // Slow status condition
-            EncounterPrototype::BygoneEffigy => false,
-
             // Returning the status on death
             EncounterPrototype::TheLostAndForgotten => false,
 
-            // Frantic Escape changing cost over time
-            EncounterPrototype::TheInsatiable => false,
-
             // Chains of Binding Status
-            // Teammate move crash if dies to poison
+            // Teammate move crash if minion dies to poison
             EncounterPrototype::Queen => false,
 
             _ => true,
         }
     }
 
-    pub fn get_act(self) -> Act {
-        use Act::*;
+    pub fn get_act(self) -> ActPrototype {
+        use ActPrototype::*;
         match self {
             EncounterPrototype::FuzzyWurmCrawler => Overgrowth,
             EncounterPrototype::SingleNibbit => Overgrowth,
@@ -124,70 +116,76 @@ impl EncounterPrototype {
             EncounterPrototype::ConstructGang => Glory,
             EncounterPrototype::Queen => Glory,
             EncounterPrototype::TestSubject => Glory,
+            EncounterPrototype::Doormaker => Glory,
         }
     }
 
     #[allow(clippy::match_same_arms)]
-    fn is_elite(self) -> bool {
+    pub fn get_kind(self) -> EncounterKind {
+        use EncounterKind::*;
         match self {
-            EncounterPrototype::FuzzyWurmCrawler => false,
-            EncounterPrototype::SingleNibbit => false,
-            EncounterPrototype::DoubleNibbit => false,
-            EncounterPrototype::SlimesWeak => false,
-            EncounterPrototype::ShrinkerBeetle => false,
-            EncounterPrototype::Byrdonis => true,
-            EncounterPrototype::PhrogParasite => true,
-            EncounterPrototype::BygoneEffigy => true,
-            EncounterPrototype::SingleCubexConstruct => false,
-            EncounterPrototype::BeetleAndFuzzy => false,
-            EncounterPrototype::RubyRaiders => false,
-            EncounterPrototype::JaxfruitAndFlyconid => false,
-            EncounterPrototype::Vantom => false,
-            EncounterPrototype::TheKin => false,
-            EncounterPrototype::BowlbugsWeak => false,
-            EncounterPrototype::BowlbugsStrong => false,
-            EncounterPrototype::SoloTunneler => false,
-            EncounterPrototype::LouseProgenitor => false,
-            EncounterPrototype::SpinyToad => false,
-            EncounterPrototype::InfestedPrism => true,
-            EncounterPrototype::Entomancer => true,
-            EncounterPrototype::Chompers => false,
-            EncounterPrototype::SlumberParty => false,
-            EncounterPrototype::TheInsatiable => false,
-            EncounterPrototype::TurretOperator => false,
-            EncounterPrototype::DevotedSculptor => false,
-            EncounterPrototype::OwlMagistrate => false,
-            EncounterPrototype::SlimedBerserker => false,
-            EncounterPrototype::MechaKnight => true,
-            EncounterPrototype::Knights => true,
-            EncounterPrototype::SoulNexus => true,
-            EncounterPrototype::TheLostAndForgotten => false,
-            EncounterPrototype::ConstructGang => false,
-            EncounterPrototype::Queen => false,
-            EncounterPrototype::ExoskeletonWeak => false,
-            EncounterPrototype::ExoskeletonStrong => false,
-            EncounterPrototype::Mytes => false,
-            EncounterPrototype::TestSubject => false,
+            EncounterPrototype::FuzzyWurmCrawler => Weak,
+            EncounterPrototype::SingleNibbit => Weak,
+            EncounterPrototype::DoubleNibbit => Normal,
+            EncounterPrototype::SlimesWeak => Weak,
+            EncounterPrototype::ShrinkerBeetle => Weak,
+            EncounterPrototype::Byrdonis => Elite,
+            EncounterPrototype::PhrogParasite => Elite,
+            EncounterPrototype::BygoneEffigy => Elite,
+            EncounterPrototype::SingleCubexConstruct => Normal,
+            EncounterPrototype::BeetleAndFuzzy => Normal,
+            EncounterPrototype::RubyRaiders => Normal,
+            EncounterPrototype::JaxfruitAndFlyconid => Normal,
+            EncounterPrototype::Vantom => Boss,
+            EncounterPrototype::TheKin => Boss,
+            EncounterPrototype::BowlbugsWeak => Weak,
+            EncounterPrototype::BowlbugsStrong => Normal,
+            EncounterPrototype::SoloTunneler => Weak,
+            EncounterPrototype::LouseProgenitor => Normal,
+            EncounterPrototype::SpinyToad => Normal,
+            EncounterPrototype::InfestedPrism => Elite,
+            EncounterPrototype::Entomancer => Elite,
+            EncounterPrototype::Chompers => Normal,
+            EncounterPrototype::SlumberParty => Normal,
+            EncounterPrototype::TheInsatiable => Boss,
+            EncounterPrototype::TurretOperator => Weak,
+            EncounterPrototype::DevotedSculptor => Weak,
+            EncounterPrototype::OwlMagistrate => Normal,
+            EncounterPrototype::SlimedBerserker => Normal,
+            EncounterPrototype::MechaKnight => Elite,
+            EncounterPrototype::Knights => Elite,
+            EncounterPrototype::SoulNexus => Elite,
+            EncounterPrototype::TheLostAndForgotten => Normal,
+            EncounterPrototype::ConstructGang => Normal,
+            EncounterPrototype::Queen => Boss,
+            EncounterPrototype::ExoskeletonWeak => Weak,
+            EncounterPrototype::ExoskeletonStrong => Normal,
+            EncounterPrototype::Mytes => Normal,
+            EncounterPrototype::TestSubject => Boss,
+            EncounterPrototype::Doormaker => Boss,
         }
     }
 }
 
 impl CombatState {
     pub(crate) fn get_starting_states<
-        Distribution: 'static + distribution::Distribution<Self, Inner<Self> = Distribution> + std::fmt::Debug,
+        Family: DistributionFamily,
+        R: Borrow<FullRelicState>,
+        D: Borrow<[Card]>,
     >(
         encounter: EncounterPrototype,
-        run_info: &RunInfo,
+        run_info: &RunInfo<R, D>,
 
         mut enemy_max_hp_filter: impl FnMut(&[u16]) -> bool,
-    ) -> Distribution {
-        let state = Distribution::single_value(Self {
+    ) -> Family::Distribution<Self> {
+        let state = Family::Distribution::single_value(Self {
             turn_counter: 0,
+            died_to_sandpit: false,
             current_turn_side: super::CombatSide::Player,
 
             player: Box::new(Player {
                 hand: vec![].into_iter().collect(),
-                draw_pile: run_info.deck.clone().into_iter().collect(),
+                draw_pile: run_info.deck.borrow().iter().copied().collect(),
                 draw_pile_top_card: None,
                 discard_pile: vec![].into_iter().collect(),
                 exhaust_pile: vec![].into_iter().collect(),
@@ -206,7 +204,7 @@ impl CombatState {
             }),
             enemies: vec![].into(),
 
-            relic_state: run_info.relic_state,
+            relic_state: *run_info.relic_state.borrow(),
         });
 
         assert!(state.all_unique());
@@ -216,7 +214,7 @@ impl CombatState {
                 let hp = 55..=57;
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|hp| {
+                    Family::Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
                         state.enemies.add_enemy(Enemy {
@@ -242,7 +240,7 @@ impl CombatState {
                 let hp = 42..=46;
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|hp| {
+                    Family::Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
                         state.enemies.add_enemy(Enemy {
@@ -268,7 +266,7 @@ impl CombatState {
                 let hps = (42..=46).cartesian_product(42..=46);
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hps.clone().map(|(first_hp, second_hp)| {
+                    Family::Distribution::equal_chance(hps.clone().map(|(first_hp, second_hp)| {
                         let mut state = state.clone();
 
                         state.enemies.add_enemy(Enemy {
@@ -283,6 +281,7 @@ impl CombatState {
                             state_machine: EnemyStateMachine {
                                 current_state: 1,
                                 stunned: 0,
+                                bonus_attack_repeats: 0,
                             },
                             has_taken_unblocked_attack_damage_this_turn: false,
                         });
@@ -299,6 +298,7 @@ impl CombatState {
                             state_machine: EnemyStateMachine {
                                 current_state: 2,
                                 stunned: 0,
+                                bonus_attack_repeats: 0,
                             },
                             has_taken_unblocked_attack_damage_this_turn: false,
                         });
@@ -362,7 +362,7 @@ impl CombatState {
                 });
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(
+                    Family::Distribution::equal_chance(
                         typ_and_hp_action
                             .clone()
                             .cartesian_product([false, true])
@@ -402,7 +402,7 @@ impl CombatState {
                 let hp = 38..=40;
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|hp| {
+                    Family::Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
                         state.enemies.add_enemy(Enemy {
@@ -428,7 +428,7 @@ impl CombatState {
                 let hp = 81..=84;
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|hp| {
+                    Family::Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
                         let mut status = EnumMap::default();
@@ -458,7 +458,7 @@ impl CombatState {
                 let hp = 61..=64;
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|hp| {
+                    Family::Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
                         let mut status = EnumMap::default();
@@ -488,13 +488,12 @@ impl CombatState {
                 let hp = 127..=127;
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|hp| {
+                    Family::Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
                         let mut status = EnumMap::default();
 
-                        // TODO:
-                        // status[Status::Slow] = 1;
+                        status[Status::Slow] = 1;
 
                         state.enemies.add_enemy(Enemy {
                             prototype: EnemyPrototype::BygoneEffigy,
@@ -519,7 +518,7 @@ impl CombatState {
                 let hp = 65..=65;
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|hp| {
+                    Family::Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
                         let mut status = EnumMap::default();
@@ -549,7 +548,7 @@ impl CombatState {
                 let hp = (38..=40).cartesian_product(55..=57);
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|(beetle_hp, fuzzy_hp)| {
+                    Family::Distribution::equal_chance(hp.clone().map(|(beetle_hp, fuzzy_hp)| {
                         let mut state = state.clone();
 
                         state.enemies.add_enemy(Enemy {
@@ -591,7 +590,7 @@ impl CombatState {
                     .cartesian_product(1..=2);
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(
+                    Family::Distribution::equal_chance(hp.clone().map(
                         |((jax_hp, flyconid_hp), current_state)| {
                             let mut state = state.clone();
 
@@ -620,6 +619,7 @@ impl CombatState {
                                 state_machine: EnemyStateMachine {
                                     current_state,
                                     stunned: 0,
+                                    bonus_attack_repeats: 0,
                                 },
                                 has_taken_unblocked_attack_damage_this_turn: false,
                             });
@@ -659,7 +659,7 @@ impl CombatState {
                 });
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(typ_and_hp.clone().map(|enemies| {
+                    Family::Distribution::equal_chance(typ_and_hp.clone().map(|enemies| {
                         let mut state = state.clone();
 
                         for (enemy, hp) in enemies {
@@ -708,7 +708,7 @@ impl CombatState {
                     .cartesian_product(58..=59)
                     .cartesian_product([false, true].into_iter());
 
-                Distribution::equal_chance(hp.map(|((first, second), swap)| {
+                Family::Distribution::equal_chance(hp.map(|((first, second), swap)| {
                     let mut state = state.clone();
 
                     let mut follower = EnumMap::default();
@@ -739,6 +739,7 @@ impl CombatState {
                         state_machine: EnemyStateMachine {
                             current_state: 2,
                             stunned: 0,
+                            bonus_attack_repeats: 0,
                         },
                         has_taken_unblocked_attack_damage_this_turn: false,
                     });
@@ -784,7 +785,7 @@ impl CombatState {
                 });
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(typ_and_hp.clone().map(|enemies| {
+                    Family::Distribution::equal_chance(typ_and_hp.clone().map(|enemies| {
                         let mut state = state.clone();
 
                         let mut unbalanced = EnumMap::default();
@@ -842,7 +843,7 @@ impl CombatState {
                 });
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(typ_and_hp.clone().map(|enemies| {
+                    Family::Distribution::equal_chance(typ_and_hp.clone().map(|enemies| {
                         let mut state = state.clone();
 
                         let mut unbalanced = EnumMap::default();
@@ -897,7 +898,7 @@ impl CombatState {
                 let hp = 134..=136;
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|hp| {
+                    Family::Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
                         let mut status = EnumMap::default();
@@ -967,7 +968,7 @@ impl CombatState {
                 let hp = (60..=64).cartesian_product(60..=64);
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|(first, second)| {
+                    Family::Distribution::equal_chance(hp.clone().map(|(first, second)| {
                         let mut state = state.clone();
 
                         let mut status = EnumMap::default();
@@ -1019,7 +1020,7 @@ impl CombatState {
                     .map(|((a, b), c)| [a, b, c]);
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|enemies| {
+                    Family::Distribution::equal_chance(hp.clone().map(|enemies| {
                         let mut state = state.clone();
 
                         let mut unbalanced = EnumMap::default();
@@ -1087,7 +1088,7 @@ impl CombatState {
                 let hp = 116..=119;
 
                 let state = state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hp.clone().map(|hp| {
+                    Family::Distribution::equal_chance(hp.clone().map(|hp| {
                         let mut state = state.clone();
 
                         state.enemies.add_enemy(Enemy {
@@ -1382,7 +1383,7 @@ impl CombatState {
                 let hps = iproduct!(24..=28, 24..=28, 24..=28).map(Into::into);
 
                 state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hps.clone().map(|hps: [u16; 3]| {
+                    Family::Distribution::equal_chance(hps.clone().map(|hps: [u16; 3]| {
                         let mut state = state.clone();
 
                         let mut exo = EnumMap::default();
@@ -1401,6 +1402,7 @@ impl CombatState {
                                 state_machine: EnemyStateMachine {
                                     stunned: 0,
                                     current_state: i.try_into().unwrap(),
+                                    bonus_attack_repeats: 0,
                                 },
                                 has_taken_unblocked_attack_damage_this_turn: false,
                             });
@@ -1416,7 +1418,7 @@ impl CombatState {
                     .cartesian_product([0, 1]);
 
                 state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hps.clone().map(
+                    Family::Distribution::equal_chance(hps.clone().map(
                         |(hps, fourth): ([u16; 4], usize)| {
                             let mut state = state.clone();
 
@@ -1424,7 +1426,7 @@ impl CombatState {
                             exo[Status::HardToKill] = 9;
 
                             for (mut i, hp) in hps.into_iter().enumerate() {
-                                if i == 4 {
+                                if i == 3 {
                                     i = fourth;
                                 }
 
@@ -1440,6 +1442,7 @@ impl CombatState {
                                     state_machine: EnemyStateMachine {
                                         stunned: 0,
                                         current_state: i.try_into().unwrap(),
+                                        bonus_attack_repeats: 0,
                                     },
                                     has_taken_unblocked_attack_damage_this_turn: false,
                                 });
@@ -1454,7 +1457,7 @@ impl CombatState {
                 let hps = iproduct!(24..=28, 24..=28).map(Into::into);
 
                 state.flat_map_simple(|state| {
-                    Distribution::equal_chance(hps.clone().map(|hps: [u16; 2]| {
+                    Family::Distribution::equal_chance(hps.clone().map(|hps: [u16; 2]| {
                         let mut state = state.clone();
 
                         for (i, hp) in hps.into_iter().enumerate() {
@@ -1471,6 +1474,7 @@ impl CombatState {
                                     stunned: 0,
                                     // Map 0 to 0 and 1 to 2
                                     current_state: (i + i).try_into().unwrap(),
+                                    bonus_attack_repeats: 0,
                                 },
                                 has_taken_unblocked_attack_damage_this_turn: false,
                             });
@@ -1500,6 +1504,22 @@ impl CombatState {
 
                 state
             }),
+            EncounterPrototype::Doormaker => state.map(|mut state| {
+                state.enemies.add_enemy(Enemy {
+                    prototype: EnemyPrototype::Doormaker,
+                    creature: Creature {
+                        hp: u16::MAX,
+                        max_hp: u16::MAX,
+                        block: 0,
+                        statuses: EnumMap::default(),
+                    },
+                    has_acted_this_turn: false,
+                    state_machine: EnemyStateMachine::default(),
+                    has_taken_unblocked_attack_damage_this_turn: false,
+                });
+
+                state
+            }),
         };
 
         assert!(!state_with_enemy.is_empty());
@@ -1520,6 +1540,7 @@ impl CombatState {
 
         if run_info
             .relic_state
+            .borrow()
             .contains(RelicPrototype::TeaOfDiscourtesy)
         {
             for _ in 0..2 {
@@ -1535,7 +1556,7 @@ impl CombatState {
 
         // TODO: This means we instantiate #NumPossibleStartingHands GameStates.
         // This will likely blow up our RAM. Find a way to solve that
-        let mut state: Distribution = state.flat_map_simple(Self::on_start_player_turn);
+        let mut state = state.flat_map_simple(Self::on_start_player_turn);
         assert!(!state.is_empty());
 
         // Innate cards
@@ -1545,8 +1566,11 @@ impl CombatState {
         let mut state = state.fix_odds();
         assert!(!state.is_empty());
 
-        let mut state = if encounter.is_elite()
-            && run_info.relic_state.contains(RelicPrototype::BoomingConch)
+        let mut state = if encounter.get_kind() == EncounterKind::Elite
+            && run_info
+                .relic_state
+                .borrow()
+                .contains(RelicPrototype::BoomingConch)
         {
             for _ in 0..2 {
                 state = state.flat_map_simple(CombatState::draw_single_card);
@@ -1560,6 +1584,7 @@ impl CombatState {
 
         if run_info
             .relic_state
+            .borrow()
             .contains(RelicPrototype::OddlySmoothStone)
         {
             state = state.flat_map_simple(|state| {
@@ -1567,19 +1592,31 @@ impl CombatState {
             });
         }
 
-        if run_info.relic_state.contains(RelicPrototype::Gorget) {
+        if run_info
+            .relic_state
+            .borrow()
+            .contains(RelicPrototype::Gorget)
+        {
             state = state.flat_map_simple(|state| {
                 state.apply_status_change(CharacterIndex::Player, Status::Plating, 4)
             });
         }
 
-        if run_info.relic_state.contains(RelicPrototype::Vajra) {
+        if run_info
+            .relic_state
+            .borrow()
+            .contains(RelicPrototype::Vajra)
+        {
             state = state.flat_map_simple(|state| {
                 state.apply_status_change(CharacterIndex::Player, Status::Strength, 1)
             });
         }
 
-        if run_info.relic_state.contains(RelicPrototype::BronzeScales) {
+        if run_info
+            .relic_state
+            .borrow()
+            .contains(RelicPrototype::BronzeScales)
+        {
             state = state.flat_map_simple(|state| {
                 state.apply_status_change(CharacterIndex::Player, Status::Thorns, 3)
             });
@@ -1587,6 +1624,7 @@ impl CombatState {
 
         if run_info
             .relic_state
+            .borrow()
             .contains(RelicPrototype::BagOfPreparation)
         {
             for _ in 0..2 {
@@ -1594,13 +1632,21 @@ impl CombatState {
             }
         }
 
-        if run_info.relic_state.contains(RelicPrototype::Anchor) {
+        if run_info
+            .relic_state
+            .borrow()
+            .contains(RelicPrototype::Anchor)
+        {
             state = state.flat_map_simple(|state| {
                 state.creature_add_block_to_itself(CharacterIndex::Player, 10)
             });
         }
 
-        if run_info.relic_state.contains(RelicPrototype::BagOfMarbles) {
+        if run_info
+            .relic_state
+            .borrow()
+            .contains(RelicPrototype::BagOfMarbles)
+        {
             state = state.flat_map_simple(|state| {
                 state.for_all_enemies(|state, enemy| {
                     state.apply_status_change(CharacterIndex::Enemy(enemy), Status::Vulnerable, 1)
@@ -1608,7 +1654,11 @@ impl CombatState {
             });
         }
 
-        if run_info.relic_state.contains(RelicPrototype::RedMask) {
+        if run_info
+            .relic_state
+            .borrow()
+            .contains(RelicPrototype::RedMask)
+        {
             state = state.flat_map_simple(|state| {
                 state.for_all_enemies(|state, enemy| {
                     state.apply_status_change(CharacterIndex::Enemy(enemy), Status::Weak, 1)
@@ -1616,7 +1666,11 @@ impl CombatState {
             });
         }
 
-        if run_info.relic_state.contains(RelicPrototype::TwistedFunnel) {
+        if run_info
+            .relic_state
+            .borrow()
+            .contains(RelicPrototype::TwistedFunnel)
+        {
             state = state.flat_map_simple(|state| {
                 state.for_all_enemies(|state, enemy| {
                     state.apply_status_change(CharacterIndex::Enemy(enemy), Status::Poison, 4)
@@ -1624,13 +1678,21 @@ impl CombatState {
             });
         }
 
-        if let Some(v) = run_info.relic_state.get_state(RelicPrototype::Girya) {
+        if let Some(v) = run_info
+            .relic_state
+            .borrow()
+            .get_state(RelicPrototype::Girya)
+        {
             state = state.flat_map_simple(|state| {
                 state.apply_status_change(CharacterIndex::Player, Status::Strength, i16::from(v))
             });
         }
 
-        if run_info.relic_state.contains(RelicPrototype::Bellows) {
+        if run_info
+            .relic_state
+            .borrow()
+            .contains(RelicPrototype::Bellows)
+        {
             state = state.map(|mut state| {
                 state.player.hand.upgrade_all();
                 state
