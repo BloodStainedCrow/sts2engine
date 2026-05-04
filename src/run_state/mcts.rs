@@ -1,7 +1,7 @@
 use sts2mcts::mcts;
 
 use crate::{
-    distribution::{Distribution, single::SingleFamily, full::FullFamily},
+    distribution::{Distribution, full::FullFamily, single::SingleFamily},
     mcts::Eval,
     run_state::{ActPrototype, Map, RunAction, RunState},
 };
@@ -52,10 +52,8 @@ impl mcts::GameState for RunState {
         // TODO: This means we abort when panicking, which seems annoying. Do try to quantify the amount this saves on performance
         take_mut::take_or_recover(
             self,
-            || RunState::start_run::<single::Distribution<_>>(Map::default()).collapse(),
-            |state| {
-                RunState::apply_action::<single::Distribution<RunState>>(state, *action).collapse()
-            },
+            || RunState::start_run::<SingleFamily>(Map::default()).collapse(),
+            |state| RunState::apply_action::<SingleFamily>(state, *action).collapse(),
         );
     }
 }
@@ -87,9 +85,7 @@ mod test {
             };
             let res = mcts.search(timer);
 
-            state = state
-                .apply_action::<SingleFamily>(res)
-                .collapse();
+            state = state.apply_action::<SingleFamily>(res).collapse();
 
             if state.get_eval().is_some() {
                 break;

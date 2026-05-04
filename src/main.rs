@@ -25,7 +25,7 @@ use crate::{
         relics::FullRelicState,
     },
     comm::Comm,
-    distribution::Distribution,
+    distribution::{Distribution, full::FullFamily},
     micro_engine::{EvalResult, EvaluationFunction},
 };
 
@@ -140,13 +140,11 @@ fn run_mcts() {
 
     let mut comm = Comm::new();
     loop {
-        let pre_first_turn_state = combat_state::CombatState::get_starting_states::<
-            FullFamily,
-            _,
-            _,
-        >(comm.guess_encounter(), &comm.get_run_state(), |hps| {
-            comm.filter_hp(hps)
-        });
+        let pre_first_turn_state = combat_state::CombatState::get_starting_states::<FullFamily, _, _>(
+            comm.guess_encounter(),
+            &comm.get_run_state(),
+            |hps| comm.filter_hp(hps),
+        );
 
         let mut state = pre_first_turn_state;
 

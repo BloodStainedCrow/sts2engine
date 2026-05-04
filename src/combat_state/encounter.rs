@@ -1556,7 +1556,7 @@ impl CombatState {
 
         // TODO: This means we instantiate #NumPossibleStartingHands GameStates.
         // This will likely blow up our RAM. Find a way to solve that
-        let mut state = state.flat_map_simple(Self::on_start_player_turn);
+        let mut state = state.flat_map_simple(Self::on_start_player_turn::<Family>);
         assert!(!state.is_empty());
 
         // Innate cards
@@ -1573,7 +1573,7 @@ impl CombatState {
                 .contains(RelicPrototype::BoomingConch)
         {
             for _ in 0..2 {
-                state = state.flat_map_simple(CombatState::draw_single_card);
+                state = state.flat_map_simple(CombatState::draw_single_card::<Family>);
             }
             state
         } else {
@@ -1588,7 +1588,7 @@ impl CombatState {
             .contains(RelicPrototype::OddlySmoothStone)
         {
             state = state.flat_map_simple(|state| {
-                state.apply_status_change(CharacterIndex::Player, Status::Dexterity, 1)
+                state.apply_status_change::<Family>(CharacterIndex::Player, Status::Dexterity, 1)
             });
         }
 
@@ -1598,7 +1598,7 @@ impl CombatState {
             .contains(RelicPrototype::Gorget)
         {
             state = state.flat_map_simple(|state| {
-                state.apply_status_change(CharacterIndex::Player, Status::Plating, 4)
+                state.apply_status_change::<Family>(CharacterIndex::Player, Status::Plating, 4)
             });
         }
 
@@ -1608,7 +1608,7 @@ impl CombatState {
             .contains(RelicPrototype::Vajra)
         {
             state = state.flat_map_simple(|state| {
-                state.apply_status_change(CharacterIndex::Player, Status::Strength, 1)
+                state.apply_status_change::<Family>(CharacterIndex::Player, Status::Strength, 1)
             });
         }
 
@@ -1618,7 +1618,7 @@ impl CombatState {
             .contains(RelicPrototype::BronzeScales)
         {
             state = state.flat_map_simple(|state| {
-                state.apply_status_change(CharacterIndex::Player, Status::Thorns, 3)
+                state.apply_status_change::<Family>(CharacterIndex::Player, Status::Thorns, 3)
             });
         }
 
@@ -1628,7 +1628,7 @@ impl CombatState {
             .contains(RelicPrototype::BagOfPreparation)
         {
             for _ in 0..2 {
-                state = state.flat_map_simple(Self::draw_single_card);
+                state = state.flat_map_simple(Self::draw_single_card::<Family>);
             }
         }
 
@@ -1638,7 +1638,7 @@ impl CombatState {
             .contains(RelicPrototype::Anchor)
         {
             state = state.flat_map_simple(|state| {
-                state.creature_add_block_to_itself(CharacterIndex::Player, 10)
+                state.creature_add_block_to_itself::<Family>(CharacterIndex::Player, 10)
             });
         }
 
@@ -1648,8 +1648,12 @@ impl CombatState {
             .contains(RelicPrototype::BagOfMarbles)
         {
             state = state.flat_map_simple(|state| {
-                state.for_all_enemies(|state, enemy| {
-                    state.apply_status_change(CharacterIndex::Enemy(enemy), Status::Vulnerable, 1)
+                state.for_all_enemies::<Family>(|state, enemy| {
+                    state.apply_status_change::<Family>(
+                        CharacterIndex::Enemy(enemy),
+                        Status::Vulnerable,
+                        1,
+                    )
                 })
             });
         }
@@ -1660,8 +1664,12 @@ impl CombatState {
             .contains(RelicPrototype::RedMask)
         {
             state = state.flat_map_simple(|state| {
-                state.for_all_enemies(|state, enemy| {
-                    state.apply_status_change(CharacterIndex::Enemy(enemy), Status::Weak, 1)
+                state.for_all_enemies::<Family>(|state, enemy| {
+                    state.apply_status_change::<Family>(
+                        CharacterIndex::Enemy(enemy),
+                        Status::Weak,
+                        1,
+                    )
                 })
             });
         }
@@ -1672,8 +1680,12 @@ impl CombatState {
             .contains(RelicPrototype::TwistedFunnel)
         {
             state = state.flat_map_simple(|state| {
-                state.for_all_enemies(|state, enemy| {
-                    state.apply_status_change(CharacterIndex::Enemy(enemy), Status::Poison, 4)
+                state.for_all_enemies::<Family>(|state, enemy| {
+                    state.apply_status_change::<Family>(
+                        CharacterIndex::Enemy(enemy),
+                        Status::Poison,
+                        4,
+                    )
                 })
             });
         }
@@ -1684,7 +1696,11 @@ impl CombatState {
             .get_state(RelicPrototype::Girya)
         {
             state = state.flat_map_simple(|state| {
-                state.apply_status_change(CharacterIndex::Player, Status::Strength, i16::from(v))
+                state.apply_status_change::<Family>(
+                    CharacterIndex::Player,
+                    Status::Strength,
+                    i16::from(v),
+                )
             });
         }
 

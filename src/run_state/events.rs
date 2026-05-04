@@ -337,20 +337,10 @@ impl Event {
         }
     }
 
-    pub fn apply_action<
-        Distribution: 'static
-            + distribution::Distribution<
-                RunState,
-                Inner<RunState> = Distribution,
-                Inner<CombatState>: distribution::Distribution<
-                    CombatState,
-                    Inner<CombatState> = Distribution::Inner<CombatState>,
-                >,
-            >,
-    >(
+    pub fn apply_action<Family: DistributionFamily>(
         mut state: RunState,
         action: EventAction,
-    ) -> Distribution {
+    ) -> Family::Distribution<RunState> {
         // TODO: can I avoid this clone?
         let Some(SubState::Event { event }) = state.sub_state.clone() else {
             unreachable!()
@@ -367,7 +357,7 @@ impl Event {
                     potions_rewards: vec![],
                 });
 
-                Distribution::single_value(state)
+                Family::Distribution::single_value(state)
             }
         }
     }

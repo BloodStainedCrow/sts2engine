@@ -12,7 +12,7 @@ use crate::{
         encounter::EncounterPrototype,
         relics::{FullRelicState, RelicPrototype},
     },
-    distribution::{self, Distribution, DistributionFamily},
+    distribution::{Distribution, DistributionFamily},
     run_state::{
         card_rarity_odds::CardRarityOdds,
         encounter_generation::{
@@ -72,7 +72,7 @@ impl RunState {
             .filter(|&act| act != ActPrototype::Underdocks);
 
         Family::Distribution::<ActPrototype>::equal_chance(starting_acts).cartesian_product(
-            Family::Distribution<Map>::single_value(map),
+            Family::Distribution::<Map>::single_value(map),
             |act, map| Self {
                 player_hp: 70,
                 player_max_hp: 70,
@@ -85,7 +85,10 @@ impl RunState {
                     encounter_generation_state: EncounterGenerationState::default(),
                     event_generation_state: EventGenerationState::default(),
                 },
-                current_position: ActPosition { row: usize::MAX, column: 0 },
+                current_position: ActPosition {
+                    row: usize::MAX,
+                    column: 0,
+                },
                 sub_state: None,
                 deck: vec![
                     CardPrototype::Strike.get_normal_card(),
@@ -195,7 +198,7 @@ impl RunState {
                 next_encounter,
                 |mut slf: Self, (new_state, next_encounter)| {
                     slf.current_act.encounter_generation_state = new_state;
-                    let combats = CombatState::get_starting_states(
+                    let combats = CombatState::get_starting_states::<Family, _, _>(
                         next_encounter,
                         &RunInfo {
                             hp: slf.player_hp,

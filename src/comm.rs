@@ -13,7 +13,7 @@ use crate::{
         enemy::EnemyPrototype,
         relics::FullRelicState,
     },
-    distribution::{self, Distribution},
+    distribution::{self, Distribution, full::FullFamily},
 };
 
 pub struct Comm {
@@ -53,7 +53,7 @@ impl Comm {
                 (
                     encounter_prototype,
                     combat_state::CombatState::get_starting_states::<
-                        distribution::full::Distribution<_>,
+                        FullFamily,
                         FullRelicState,
                         _,
                     >(

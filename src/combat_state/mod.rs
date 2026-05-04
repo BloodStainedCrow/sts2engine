@@ -364,18 +364,18 @@ impl CombatState {
                 // FIXME: state effects on cost
                 let cost = card.get_cost();
 
-                let result: Distribution =
+                let result: Family::Distribution<Self> =
                     // The fifth card is free
                     if Some(4) == result.relic_state.get_state(RelicPrototype::BrilliantScarf) {
-                        Distribution::single_value(result)
+                        Family::Distribution::single_value(result)
                     } else {
-                        result.pay_cost(cost)
+                        result.pay_cost::<Family>(cost)
                     };
                 // let result = Distribution::single_value(result);
 
                 result.flat_map_simple(|state| {
                     let target = target.map(|v| state.enemies.external_to_internal_index(v));
-                    state.play_card(card, Target::Explicit(target), true)
+                    state.play_card::<Family>(card, Target::Explicit(target), true)
                 })
             }
             CombatAction::UsePotion { index } => todo!(),
@@ -398,7 +398,7 @@ impl CombatState {
                     } => {
                         already_chosen.push(card);
                         if already_chosen.len() == count {
-                            let mut state = Distribution::single_value(state);
+                            let mut state = Family::Distribution::single_value(state);
                             for card in already_chosen.drain(..) {
                                 state = action.call((state.into(), card)).into();
                             }
@@ -416,7 +416,7 @@ impl CombatState {
                     }
                 }
             }
-            CombatAction::EndTurn => self.handle_turn_transitions(),
+            CombatAction::EndTurn => self.handle_turn_transitions::<Family>(),
         }
     }
 
@@ -480,12 +480,14 @@ impl CombatState {
         mut self,
     ) -> Result<Family::Distribution<(Self, Card)>, Self> {
         if let Some(card) = self.player.draw_pile_top_card.take() {
-            Ok(Distribution::<(Self, Card)>::single_value((self, card)))
+            Ok(Family::Distribution::<(Self, Card)>::single_value((
+                self, card,
+            )))
         } else {
             if self.player.draw_pile.is_empty() {
                 return Err(self);
             }
-            let card = Distribution::Inner::<(Self, Card)>::from_duplicates(
+            let card = Family::Distribution::<(Self, Card)>::from_duplicates(
                 self.player.draw_pile.iter_counts().map(|(card, count)| {
                     let mut state = self.clone();
                     state.player.draw_pile.remove_card(*card);
@@ -500,16 +502,16 @@ impl CombatState {
 
     fn draw_single_card<Family: DistributionFamily>(mut self) -> Family::Distribution<Self> {
         if self.player.hand.num_cards() == 10 {
-            return Distribution::single_value(self);
+            return Family::Distribution::single_value(self);
         }
 
         let state = if let Some(top_card) = self.player.draw_pile_top_card.take() {
             self.player.hand.add_card(top_card);
-            Distribution::single_value(self)
+            Family::Distribution::single_value(self)
         } else if self.player.draw_pile.is_empty() {
             if self.player.discard_pile.is_empty() {
                 // Nothing to shuffle nor draw
-                return Distribution::single_value(self);
+                return Family::Distribution::single_value(self);
             }
 
             // Shuffle the discard pile into the draw pile
@@ -529,7 +531,7 @@ impl CombatState {
                     .add_card(CardPrototype::Soot.get_normal_card());
             }
 
-            self.draw_single_card()
+            self.draw_single_card::<Family>()
         } else {
             let cards = self.player.draw_pile.iter_counts();
 
@@ -551,7 +553,7 @@ impl CombatState {
 
         assert!(!state.is_empty());
 
-        state.flat_map_simple(Self::on_draw_card)
+        state.flat_map_simple(Self::on_draw_card::<Family>)
     }
 
     fn shuffle_discard_pile<Family: DistributionFamily>(mut self) -> Family::Distribution<Self> {
@@ -572,18 +574,18 @@ impl CombatState {
         if self.player.hand.num_cards() > 5
         || self.player.draw_pile_top_card.is_some()
         || self.player.draw_pile.num_cards() + self.player.discard_pile.num_cards() < 5
-        || !Distribution::IS_SIZE_SENSITIVE
+        || !Family::IS_SIZE_SENSITIVE
         // TODO: This is bad for full distributions, but lets be real, that only matters action application, not rollout
         || self.player.draw_pile.num_cards() < 5
         {
             // Just do the simple thing for now, to ensure we draw the top card
             let num_cards = 5;
 
-            let mut res = Distribution::single_value(self);
+            let mut res = Family::Distribution::single_value(self);
 
             for _ in 0..num_cards {
                 assert!(!res.is_empty());
-                res = res.flat_map_simple(Self::draw_single_card);
+                res = res.flat_map_simple(Self::draw_single_card::<Family>);
                 res.dedup();
             }
 
@@ -704,19 +706,22 @@ impl CombatState {
 
             assert!(indices.peek().is_some());
 
-            return Family::Distribution::<Distribution>::equal_chance(indices.map(|v| {
-                let mut state = Distribution::single_value(self.clone());
+            return Family::Distribution::<Family::Distribution<Self>>::equal_chance(indices.map(
+                |v| {
+                    let mut state = Family::Distribution::single_value(self.clone());
 
-                for (index, card) in v.into_iter().enumerate() {
-                    if index == num_draw_pile_cards {
-                        // Shuffle
-                        state = state.flat_map_simple(Self::shuffle_discard_pile);
+                    for (index, card) in v.into_iter().enumerate() {
+                        if index == num_draw_pile_cards {
+                            // Shuffle
+                            state = state.flat_map_simple(Self::shuffle_discard_pile::<Family>);
+                        }
+                        state =
+                            state.flat_map_simple(|state| state.draw_specific_card::<Family>(card));
                     }
-                    state = state.flat_map_simple(|state| state.draw_specific_card(card));
-                }
 
-                state
-            }))
+                    state
+                },
+            ))
             .flatten();
         }
 
@@ -753,32 +758,34 @@ impl CombatState {
                 }))
             });
 
-        Family::Distribution::Inner::<Distribution>::equal_chance(indices.map(|[a, b, c, d, e]| {
-            let mut state = Family::Distribution::single_value(self.clone());
+        Family::Distribution::<Family::Distribution<Self>>::equal_chance(indices.map(
+            |[a, b, c, d, e]| {
+                let mut state = Family::Distribution::single_value(self.clone());
 
-            state = state.flat_map_simple(|state| state.draw_specific_card(a));
-            state = state.flat_map_simple(|state| state.draw_specific_card(b));
-            state = state.flat_map_simple(|state| state.draw_specific_card(c));
-            state = state.flat_map_simple(|state| state.draw_specific_card(d));
-            state = state.flat_map_simple(|state| state.draw_specific_card(e));
+                state = state.flat_map_simple(|state| state.draw_specific_card::<Family>(a));
+                state = state.flat_map_simple(|state| state.draw_specific_card::<Family>(b));
+                state = state.flat_map_simple(|state| state.draw_specific_card::<Family>(c));
+                state = state.flat_map_simple(|state| state.draw_specific_card::<Family>(d));
+                state = state.flat_map_simple(|state| state.draw_specific_card::<Family>(e));
 
-            state
-        }))
+                state
+            },
+        ))
         .flatten()
     }
 
     fn handle_turn_transitions<Family: DistributionFamily>(mut self) -> Family::Distribution<Self> {
         let mut state = Family::Distribution::single_value(self);
 
-        state = state.flat_map_simple(Self::on_end_player_turn);
+        state = state.flat_map_simple(Self::on_end_player_turn::<Family>);
 
-        state = state.flat_map_simple(Self::on_start_enemy_turn);
+        state = state.flat_map_simple(Self::on_start_enemy_turn::<Family>);
 
-        state = state.flat_map_simple(Self::handle_enemy_actions);
+        state = state.flat_map_simple(Self::handle_enemy_actions::<Family>);
 
-        state = state.flat_map_simple(Self::on_end_enemy_turn);
+        state = state.flat_map_simple(Self::on_end_enemy_turn::<Family>);
 
-        state = state.flat_map_simple(Self::on_start_player_turn);
+        state = state.flat_map_simple(Self::on_start_player_turn::<Family>);
 
         state
     }
@@ -880,22 +887,22 @@ impl CombatState {
 
         let state =
             if self.turn_counter == 7 && self.relic_state.contains(RelicPrototype::StoneCalendar) {
-                self.for_all_enemies(|state, index| {
-                    state.apply_unsourced_damage(52, CharacterIndex::Enemy(index))
+                self.for_all_enemies::<Family>(|state, index| {
+                    state.apply_unsourced_damage::<Family>(52, CharacterIndex::Enemy(index))
                 })
             } else {
-                Distribution::single_value(self)
+                Family::Distribution::single_value(self)
             };
 
         let state = state.flat_map_simple(|state| {
             if state.relic_state.contains(RelicPrototype::ParryingShield)
                 && state.player.creature.block >= 10
             {
-                state.get_random_enemy_equal_chance(|state, enemy| {
-                    state.apply_unsourced_damage(6, CharacterIndex::Enemy(enemy))
+                state.get_random_enemy_equal_chance::<Family>(|state, enemy| {
+                    state.apply_unsourced_damage::<Family>(6, CharacterIndex::Enemy(enemy))
                 })
             } else {
-                Distribution::single_value(state)
+                Family::Distribution::single_value(state)
             }
         });
 
@@ -917,9 +924,9 @@ impl CombatState {
     fn on_start_enemy_turn<Family: DistributionFamily>(mut self) -> Family::Distribution<Self> {
         self.current_turn_side = CombatSide::Enemies;
 
-        let state = self.for_all_enemies(|mut state, enemy_index| {
+        let state = self.for_all_enemies::<Family>(|mut state, enemy_index| {
             let Some(enemy) = state.enemies.get_mut(enemy_index) else {
-                return Distribution::single_value(state);
+                return Family::Distribution::single_value(state);
             };
 
             if enemy.creature.statuses[Status::Burrowed] > 0 {
@@ -972,10 +979,10 @@ impl CombatState {
                 .expect("Plating cannot be negative");
             decrease_non_neg(&mut enemy.creature.statuses[Status::Plating]);
 
-            Distribution::single_value(state)
+            Family::Distribution::single_value(state)
         });
 
-        state.flat_map_simple(|state| state.on_any_enemy_maybe_dead())
+        state.flat_map_simple(|state| state.on_any_enemy_maybe_dead::<Family>())
     }
 
     fn enemy_is_alone(&self, enemy_index: EnemyIndex) -> bool {
@@ -984,7 +991,7 @@ impl CombatState {
 
     fn handle_enemy_actions<Family: DistributionFamily>(self) -> Family::Distribution<Self> {
         // Enemy actions
-        let state = self.for_all_enemies(|mut state, enemy_index| {
+        let state = self.for_all_enemies::<Family>(|mut state, enemy_index| {
             let alone = state.enemy_is_alone(enemy_index);
 
             let Some(enemy) = state.enemies.get_mut(enemy_index) else {
@@ -1008,7 +1015,7 @@ impl CombatState {
                     } => {
                         for _ in 0..*repeat {
                             state = state.flat_map_simple(|state| {
-                                state.apply_attack_damage(
+                                state.apply_attack_damage::<Family>(
                                     CharacterIndex::Enemy(enemy_index),
                                     *base_damage,
                                     CharacterIndex::Player,
@@ -1024,14 +1031,14 @@ impl CombatState {
                         state
                     }),
                     EnemyAction::Block { amount } => state.flat_map_simple(|state| {
-                        state.creature_add_block_to_itself(
+                        state.creature_add_block_to_itself::<Family>(
                             CharacterIndex::Enemy(enemy_index),
                             *amount,
                         )
                     }),
                     EnemyAction::ApplyStatusSelf { status, diff } => {
                         state.flat_map_simple(|state| {
-                            state.apply_status_change(
+                            state.apply_status_change::<Family>(
                                 CharacterIndex::Enemy(enemy_index),
                                 *status,
                                 *diff,
@@ -1047,7 +1054,7 @@ impl CombatState {
                                 .exactly_one()
                                 .expect("Could not find teammate for teammate move!");
 
-                            state.apply_status_change(
+                            state.apply_status_change::<Family>(
                                 CharacterIndex::Enemy(teammate),
                                 *status,
                                 *diff,
@@ -1056,7 +1063,11 @@ impl CombatState {
                     }
                     EnemyAction::ApplyStatusPlayer { status, diff } => {
                         state.flat_map_simple(|state| {
-                            state.apply_status_change(CharacterIndex::Player, *status, *diff)
+                            state.apply_status_change::<Family>(
+                                CharacterIndex::Player,
+                                *status,
+                                *diff,
+                            )
                         })
                     }
                     EnemyAction::ShuffleCards { card, count, pile } => state.map(|mut state| {
@@ -1094,7 +1105,7 @@ impl CombatState {
 
         // Next enemy intents
         state.flat_map_simple(|state| {
-            state.for_all_enemies(|mut state, enemy_index| {
+            state.for_all_enemies::<Family>(|mut state, enemy_index| {
                 let Some(enemy) = state.enemies.get_mut(enemy_index) else {
                     return Distribution::single_value(state);
                 };
@@ -1285,7 +1296,7 @@ impl CombatState {
             {
                 let mut state = Family::Distribution::single_value(state);
                 for _ in 0..2 {
-                    state = state.flat_map_simple(CombatState::draw_single_card);
+                    state = state.flat_map_simple(CombatState::draw_single_card::<Family>);
                     state.dedup();
                 }
                 state
@@ -1296,7 +1307,7 @@ impl CombatState {
         state = state.flat_map_simple(|state| {
             if state.relic_state.contains(RelicPrototype::PaelsBlood) {
                 let state = Family::Distribution::single_value(state);
-                state.flat_map_simple(CombatState::draw_single_card)
+                state.flat_map_simple(CombatState::draw_single_card::<Family>)
             } else {
                 Family::Distribution::single_value(state)
             }
@@ -1377,7 +1388,7 @@ impl CombatState {
             state
         });
 
-        let mut state = state.flat_map_simple(Self::draw_cards_for_turn);
+        let mut state = state.flat_map_simple(Self::draw_cards_for_turn::<Family>);
 
         state = state.map(|mut state| {
             state
@@ -1433,22 +1444,22 @@ impl CombatState {
 
         state = state.flat_map_simple(|state| {
             if state.relic_state.contains(RelicPrototype::MrStruggles) {
-                state.for_all_enemies(|state, index| {
+                state.for_all_enemies::<Family>(|state, index| {
                     let turn = state.turn_counter.into();
-                    state.apply_unsourced_damage(turn, CharacterIndex::Enemy(index))
+                    state.apply_unsourced_damage::<Family>(turn, CharacterIndex::Enemy(index))
                 })
             } else {
-                Distribution::single_value(state)
+                Family::Distribution::single_value(state)
             }
         });
 
         state = state.flat_map_simple(|state| {
             if state.relic_state.contains(RelicPrototype::MercuryHourglass) {
-                state.for_all_enemies(|state: Self, index| {
-                    state.apply_unsourced_damage(3, CharacterIndex::Enemy(index))
+                state.for_all_enemies::<Family>(|state: Self, index| {
+                    state.apply_unsourced_damage::<Family>(3, CharacterIndex::Enemy(index))
                 })
             } else {
-                Distribution::single_value(state)
+                Family::Distribution::single_value(state)
             }
         });
 
@@ -1676,7 +1687,7 @@ impl CombatState {
                         )
                     });
 
-                    state.flat_map_simple(|slf| slf.add_block_from_card(base_amount))
+                    state.flat_map_simple(|slf| slf.add_block_from_card::<Family>(base_amount))
                 }
                 CardPrototype::Neutralize => {
                     let target = target.unwrap();
@@ -1684,7 +1695,7 @@ impl CombatState {
                         if card.upgraded { 4 } else { 3 } + card.enchantment.get_bonus_damage();
 
                     let state = state.flat_map_simple(|state| {
-                        state.apply_attack_damage(
+                        state.apply_attack_damage::<Family>(
                             CharacterIndex::Player,
                             base_amount,
                             CharacterIndex::Enemy(target),
@@ -1692,7 +1703,7 @@ impl CombatState {
                     });
 
                     state.flat_map_simple(|state| {
-                        state.apply_status_to_enemy(
+                        state.apply_status_to_enemy::<Family>(
                             target,
                             Status::Weak,
                             if card.upgraded { 2 } else { 1 },
@@ -1705,7 +1716,7 @@ impl CombatState {
                         if card.upgraded { 10 } else { 8 } + card.enchantment.get_bonus_damage();
 
                     let state = state.flat_map_simple(|state| {
-                        state.apply_attack_damage(
+                        state.apply_attack_damage::<Family>(
                             CharacterIndex::Player,
                             base_amount,
                             CharacterIndex::Enemy(target),
@@ -1713,7 +1724,7 @@ impl CombatState {
                     });
 
                     state.flat_map_simple(|state| {
-                        state.apply_status_to_enemy(
+                        state.apply_status_to_enemy::<Family>(
                             target,
                             Status::Weak,
                             if card.upgraded { 2 } else { 1 },
@@ -1727,7 +1738,7 @@ impl CombatState {
 
                     // FIXME: If the enemy die, the index will shift....
                     let state = state.flat_map_simple(|state| {
-                        state.apply_attack_damage(
+                        state.apply_attack_damage::<Family>(
                             CharacterIndex::Player,
                             base_amount,
                             CharacterIndex::Enemy(target),
@@ -1735,7 +1746,7 @@ impl CombatState {
                     });
 
                     state.flat_map_simple(|state| {
-                        state.apply_status_to_enemy(
+                        state.apply_status_to_enemy::<Family>(
                             target,
                             Status::Vulnerable,
                             if card.upgraded { 2 } else { 1 },
@@ -1749,7 +1760,7 @@ impl CombatState {
 
                     // FIXME: If the enemy die, the index will shift....
                     let state = state.flat_map_simple(|state| {
-                        state.apply_attack_damage(
+                        state.apply_attack_damage::<Family>(
                             CharacterIndex::Player,
                             base_amount,
                             CharacterIndex::Enemy(target),
@@ -1757,7 +1768,7 @@ impl CombatState {
                     });
 
                     state.flat_map_simple(|state| {
-                        state.apply_status_to_enemy(
+                        state.apply_status_to_enemy::<Family>(
                             target,
                             Status::Vulnerable,
                             if card.upgraded { 3 } else { 2 },
@@ -1784,12 +1795,14 @@ impl CombatState {
                                     .iter()
                                     .next()
                                     .expect("Hand contains a single card");
-                                slf.discard_card(card)
+                                slf.discard_card::<Family>(card)
                             }
                         } else {
                             Family::Distribution::single_value(slf)
                         };
-                        state.flat_map_simple(|state| state.add_block_from_card(base_amount))
+                        state.flat_map_simple(|state| {
+                            state.add_block_from_card::<Family>(base_amount)
+                        })
                     })
                 }
                 CardPrototype::Acrobatics => {
@@ -1800,7 +1813,7 @@ impl CombatState {
                         let mut state = Family::Distribution::single_value(slf);
 
                         for _ in 0..cards {
-                            state = state.flat_map_simple(CombatState::draw_single_card);
+                            state = state.flat_map_simple(CombatState::draw_single_card::<Family>);
                         }
 
                         state = state.flat_map_simple(|mut slf| {
@@ -1819,7 +1832,7 @@ impl CombatState {
                                         .iter()
                                         .next()
                                         .expect("Hand contains a single card");
-                                    slf.discard_card(card)
+                                    slf.discard_card::<Family>(card)
                                 }
                             } else {
                                 Family::Distribution::single_value(slf)
@@ -1837,7 +1850,7 @@ impl CombatState {
                         let mut state = Family::Distribution::single_value(slf);
 
                         for _ in 0..num_cards {
-                            state = state.flat_map_simple(CombatState::draw_single_card);
+                            state = state.flat_map_simple(CombatState::draw_single_card::<Family>);
                         }
 
                         state = state.flat_map_simple(|mut slf| {
@@ -1854,7 +1867,9 @@ impl CombatState {
                                 let mut cards: Vec<_> = slf.player.hand.iter().copied().collect();
                                 let mut state = Family::Distribution::single_value(slf);
                                 while let Some(card) = cards.try_remove(0) {
-                                    state = state.flat_map_simple(|state| state.discard_card(card));
+                                    state = state.flat_map_simple(|state| {
+                                        state.discard_card::<Family>(card)
+                                    });
                                 }
                                 state
                             }
@@ -1870,7 +1885,7 @@ impl CombatState {
 
                     // FIXME: If the enemy die, the index will shift....
                     let state = state.flat_map_simple(|state| {
-                        state.apply_status_to_enemy(
+                        state.apply_status_to_enemy::<Family>(
                             target,
                             Status::Poison,
                             if card.upgraded { 4 } else { 3 },
@@ -1878,7 +1893,7 @@ impl CombatState {
                     });
 
                     state.flat_map_simple(|state| {
-                        state.apply_attack_damage(
+                        state.apply_attack_damage::<Family>(
                             CharacterIndex::Player,
                             base_amount,
                             CharacterIndex::Enemy(target),
@@ -1890,12 +1905,12 @@ impl CombatState {
                     let base_amount = if card.upgraded { 8 } else { 5 };
 
                     let mut state =
-                        state.flat_map_simple(|slf| slf.add_block_from_card(base_amount));
+                        state.flat_map_simple(|slf| slf.add_block_from_card::<Family>(base_amount));
 
                     let cards = 2;
 
                     for _ in 0..cards {
-                        state = state.flat_map_simple(CombatState::draw_single_card);
+                        state = state.flat_map_simple(CombatState::draw_single_card::<Family>);
                     }
                     state.dedup();
                     state
@@ -1905,10 +1920,10 @@ impl CombatState {
                     let base_amount = if card.upgraded { 8 } else { 5 };
 
                     let mut state =
-                        state.flat_map_simple(|slf| slf.add_block_from_card(base_amount));
+                        state.flat_map_simple(|slf| slf.add_block_from_card::<Family>(base_amount));
 
                     state.flat_map_simple(|slf| {
-                        slf.apply_status_change(CharacterIndex::Player, Status::Blur, 1)
+                        slf.apply_status_change::<Family>(CharacterIndex::Player, Status::Blur, 1)
                     })
                 }
                 CardPrototype::Adrenaline => {
@@ -1923,7 +1938,7 @@ impl CombatState {
                     let cards = 2;
 
                     for _ in 0..cards {
-                        state = state.flat_map_simple(CombatState::draw_single_card);
+                        state = state.flat_map_simple(CombatState::draw_single_card::<Family>);
                     }
                     state.dedup();
                     state
@@ -1932,17 +1947,22 @@ impl CombatState {
                     assert!(target.is_none());
                     let base_amount = if card.upgraded { 16 } else { 13 };
 
-                    let state = state.flat_map_simple(|slf| slf.add_block_from_card(base_amount));
+                    let state =
+                        state.flat_map_simple(|slf| slf.add_block_from_card::<Family>(base_amount));
 
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(CharacterIndex::Player, Status::RetainHand, 1)
+                        state.apply_status_change::<Family>(
+                            CharacterIndex::Player,
+                            Status::RetainHand,
+                            1,
+                        )
                     })
                 }
                 CardPrototype::DeadlyPoison => {
                     let target = target.unwrap();
 
                     state.flat_map_simple(|state| {
-                        state.apply_status_to_enemy(
+                        state.apply_status_to_enemy::<Family>(
                             target,
                             Status::Poison,
                             if card.upgraded { 7 } else { 5 },
@@ -1953,7 +1973,7 @@ impl CombatState {
                     let target = target.unwrap();
 
                     state.flat_map_simple(|state| {
-                        state.apply_status_to_enemy(
+                        state.apply_status_to_enemy::<Family>(
                             target,
                             Status::Poison,
                             if card.upgraded { 10 } else { 7 },
@@ -1963,7 +1983,7 @@ impl CombatState {
                 CardPrototype::CorrosiveWave => {
                     assert!(target.is_none());
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Player,
                             Status::CorrosiveWave,
                             if card.upgraded { 4 } else { 3 },
@@ -1973,7 +1993,7 @@ impl CombatState {
                 CardPrototype::Burst => {
                     assert!(target.is_none());
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Player,
                             Status::Burst,
                             if card.upgraded { 2 } else { 1 },
@@ -1983,7 +2003,7 @@ impl CombatState {
                 CardPrototype::Footwork => {
                     assert!(target.is_none());
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Player,
                             Status::Dexterity,
                             if card.upgraded { 3 } else { 2 },
@@ -1993,7 +2013,7 @@ impl CombatState {
                 CardPrototype::SerpentForm => {
                     assert!(target.is_none());
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Player,
                             Status::SerpentForm,
                             if card.upgraded { 5 } else { 4 },
@@ -2003,25 +2023,37 @@ impl CombatState {
                 CardPrototype::Shadowmeld => {
                     assert!(target.is_none());
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(CharacterIndex::Player, Status::Shadowmeld, 1)
+                        state.apply_status_change::<Family>(
+                            CharacterIndex::Player,
+                            Status::Shadowmeld,
+                            1,
+                        )
                     })
                 }
                 CardPrototype::Mayhem => {
                     assert!(target.is_none());
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(CharacterIndex::Player, Status::Mayhem, 1)
+                        state.apply_status_change::<Family>(
+                            CharacterIndex::Player,
+                            Status::Mayhem,
+                            1,
+                        )
                     })
                 }
                 CardPrototype::Afterimage => {
                     assert!(target.is_none());
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(CharacterIndex::Player, Status::Afterimage, 1)
+                        state.apply_status_change::<Family>(
+                            CharacterIndex::Player,
+                            Status::Afterimage,
+                            1,
+                        )
                     })
                 }
                 CardPrototype::Accuracy => {
                     assert!(target.is_none());
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Player,
                             Status::Accuracy,
                             if card.upgraded { 6 } else { 4 },
@@ -2032,7 +2064,7 @@ impl CombatState {
                     let target = target.unwrap();
 
                     let state = state.flat_map_simple(|state| {
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Enemy(target),
                             Status::Weak,
                             if card.upgraded { 3 } else { 2 },
@@ -2040,7 +2072,7 @@ impl CombatState {
                     });
 
                     state.flat_map_simple(|state| {
-                        state.add_block_from_card(if card.upgraded { 14 } else { 11 })
+                        state.add_block_from_card::<Family>(if card.upgraded { 14 } else { 11 })
                     })
                 }
                 CardPrototype::PreciseCut => {
@@ -2052,7 +2084,7 @@ impl CombatState {
                     state.flat_map_simple(|state| {
                         let num_hand_cards = state.player.hand.num_cards();
 
-                        state.apply_attack_damage(
+                        state.apply_attack_damage::<Family>(
                             CharacterIndex::Player,
                             // FIXME: Strength and the negative are prob additive here, so this is overestimating the dmg slightly
                             (base_amount.saturating_sub(2 * num_hand_cards))
@@ -2068,7 +2100,7 @@ impl CombatState {
                     assert!(target.is_none());
 
                     let state = state.flat_map_simple(|state| {
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Player,
                             Status::Dexterity,
                             if card.upgraded { 3 } else { 2 },
@@ -2076,7 +2108,7 @@ impl CombatState {
                     });
 
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Player,
                             Status::Anticipate,
                             if card.upgraded { 3 } else { 2 },
@@ -2087,7 +2119,7 @@ impl CombatState {
                     assert!(target.is_none());
 
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Player,
                             Status::NoxiousFumes,
                             if card.upgraded { 3 } else { 2 },
@@ -2098,7 +2130,7 @@ impl CombatState {
                     assert!(target.is_none());
 
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Player,
                             Status::Fasten,
                             if card.upgraded { 7 } else { 5 },
@@ -2109,7 +2141,7 @@ impl CombatState {
                     assert!(target.is_none());
 
                     let state = state.flat_map_simple(|state| {
-                        state.add_block_from_card(if card.upgraded { 6 } else { 4 })
+                        state.add_block_from_card::<Family>(if card.upgraded { 6 } else { 4 })
                     });
 
                     state.flat_map_simple(|state| {
@@ -2117,7 +2149,7 @@ impl CombatState {
                             CharacterIndex::Player,
                             if card.upgraded { 6 } else { 4 },
                         );
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Player,
                             Status::BlockNextTurn,
                             amount
@@ -2134,7 +2166,7 @@ impl CombatState {
                             + u16::try_from(state.player.creature.statuses[Status::Accuracy])
                                 .expect("Accuracy should always be positive")
                             + card.enchantment.get_bonus_damage();
-                        state.apply_attack_damage(
+                        state.apply_attack_damage::<Family>(
                             CharacterIndex::Player,
                             base_amount,
                             CharacterIndex::Enemy(target),
@@ -2144,7 +2176,8 @@ impl CombatState {
                 CardPrototype::CloakAndDagger => {
                     assert!(target.is_none());
 
-                    let state = state.flat_map_simple(|state| state.add_block_from_card(6));
+                    let state =
+                        state.flat_map_simple(|state| state.add_block_from_card::<Family>(6));
 
                     state.map(|mut state| {
                         for _ in 0..(if card.upgraded { 2 } else { 1 }) {
@@ -2184,7 +2217,7 @@ impl CombatState {
                                 0
                             };
 
-                        state.apply_attack_damage(
+                        state.apply_attack_damage::<Family>(
                             CharacterIndex::Player,
                             base_amount + strike_dummy,
                             CharacterIndex::Enemy(target),
@@ -2213,7 +2246,11 @@ impl CombatState {
                             1
                         };
 
-                        state.apply_status_change(CharacterIndex::Player, Status::Tracking, change)
+                        state.apply_status_change::<Family>(
+                            CharacterIndex::Player,
+                            Status::Tracking,
+                            change,
+                        )
                     })
                 }
                 CardPrototype::Haze => {
@@ -2222,8 +2259,12 @@ impl CombatState {
                     state.flat_map_simple(|state| {
                         let poison_amount = if card.upgraded { 6 } else { 4 };
 
-                        state.for_all_enemies(|state, enemy_index| {
-                            state.apply_status_to_enemy(enemy_index, Status::Poison, poison_amount)
+                        state.for_all_enemies::<Family>(|state, enemy_index| {
+                            state.apply_status_to_enemy::<Family>(
+                                enemy_index,
+                                Status::Poison,
+                                poison_amount,
+                            )
                         })
                     })
                 }
@@ -2233,7 +2274,7 @@ impl CombatState {
                     state.flat_map_simple(|state| {
                         let amount = if card.upgraded { 8 } else { 6 };
 
-                        state.for_all_enemies(|state, enemy_index| {
+                        state.for_all_enemies::<Family>(|state, enemy_index| {
                             let state = state.apply_status_to_enemy::<Family>(
                                 enemy_index,
                                 Status::Strength,
@@ -2241,7 +2282,7 @@ impl CombatState {
                             );
 
                             state.flat_map_simple(|state| {
-                                state.apply_status_to_enemy(
+                                state.apply_status_to_enemy::<Family>(
                                     enemy_index,
                                     Status::PiercingWail,
                                     amount,
@@ -2280,11 +2321,15 @@ impl CombatState {
                 }),
                 CardPrototype::Abrasive => {
                     let state = state.flat_map_simple(|state| {
-                        state.apply_status_change(CharacterIndex::Player, Status::Dexterity, 1)
+                        state.apply_status_change::<Family>(
+                            CharacterIndex::Player,
+                            Status::Dexterity,
+                            1,
+                        )
                     });
 
                     state.flat_map_simple(|state| {
-                        state.apply_status_change(
+                        state.apply_status_change::<Family>(
                             CharacterIndex::Player,
                             Status::Thorns,
                             if card.upgraded { 6 } else { 4 },
@@ -2296,8 +2341,8 @@ impl CombatState {
                         if card.upgraded { 6 } else { 4 } + card.enchantment.get_bonus_damage();
 
                     let state = state.flat_map_simple(|state| {
-                        state.for_all_enemies(|state, index| {
-                            state.apply_attack_damage(
+                        state.for_all_enemies::<Family>(|state, index| {
+                            state.apply_attack_damage::<Family>(
                                 CharacterIndex::Player,
                                 dmg,
                                 CharacterIndex::Enemy(index),
@@ -2306,8 +2351,8 @@ impl CombatState {
                     });
 
                     state.flat_map_simple(|state| {
-                        state.for_all_enemies(|state, index| {
-                            state.apply_attack_damage(
+                        state.for_all_enemies::<Family>(|state, index| {
+                            state.apply_attack_damage::<Family>(
                                 CharacterIndex::Player,
                                 dmg,
                                 CharacterIndex::Enemy(index),
@@ -2320,8 +2365,8 @@ impl CombatState {
                         if card.upgraded { 8 } else { 6 } + card.enchantment.get_bonus_damage();
 
                     state.flat_map_simple(|state| {
-                        state.for_all_enemies(|state, index| {
-                            state.apply_attack_damage(
+                        state.for_all_enemies::<Family>(|state, index| {
+                            state.apply_attack_damage::<Family>(
                                 CharacterIndex::Player,
                                 dmg,
                                 CharacterIndex::Enemy(index),
@@ -2340,8 +2385,8 @@ impl CombatState {
 
                         for _ in 0..repeats {
                             state = state.flat_map_simple(|state| {
-                                state.get_random_enemy_equal_chance(|state, enemy| {
-                                    state.apply_attack_damage(
+                                state.get_random_enemy_equal_chance::<Family>(|state, enemy| {
+                                    state.apply_attack_damage::<Family>(
                                         CharacterIndex::Player,
                                         base_dmg,
                                         CharacterIndex::Enemy(enemy),
@@ -2360,13 +2405,17 @@ impl CombatState {
                     let base_dmg = 2 + card.enchantment.get_bonus_damage();
 
                     state.flat_map_simple(|state| {
-                        state.repeat_single_enemy_cancel_if_dead(target, repeats, |state, enemy| {
-                            state.apply_attack_damage(
-                                CharacterIndex::Player,
-                                base_dmg,
-                                CharacterIndex::Enemy(enemy),
-                            )
-                        })
+                        state.repeat_single_enemy_cancel_if_dead::<Family>(
+                            target,
+                            repeats,
+                            |state, enemy| {
+                                state.apply_attack_damage::<Family>(
+                                    CharacterIndex::Player,
+                                    base_dmg,
+                                    CharacterIndex::Enemy(enemy),
+                                )
+                            },
+                        )
                     })
                 }
                 CardPrototype::Flechettes => {
@@ -2385,13 +2434,17 @@ impl CombatState {
                                     .then_some(usize::from(count))
                             })
                             .sum();
-                        state.repeat_single_enemy_cancel_if_dead(target, repeats, |state, enemy| {
-                            state.apply_attack_damage(
-                                CharacterIndex::Player,
-                                base_dmg,
-                                CharacterIndex::Enemy(enemy),
-                            )
-                        })
+                        state.repeat_single_enemy_cancel_if_dead::<Family>(
+                            target,
+                            repeats,
+                            |state, enemy| {
+                                state.apply_attack_damage::<Family>(
+                                    CharacterIndex::Player,
+                                    base_dmg,
+                                    CharacterIndex::Enemy(enemy),
+                                )
+                            },
+                        )
                     })
                 }
                 CardPrototype::StormOfSteel => {
@@ -2405,12 +2458,12 @@ impl CombatState {
                         for _ in 0..num_cards {
                             state = state.flat_map_simple(|state| {
                                 let card = *state.player.hand.iter().next().unwrap();
-                                state.discard_card(card)
+                                state.discard_card::<Family>(card)
                             });
                         }
 
                         for _ in 0..num_cards {
-                            state = state.flat_map_simple(CombatState::draw_single_card);
+                            state = state.flat_map_simple(CombatState::draw_single_card::<Family>);
                         }
 
                         state
@@ -2421,7 +2474,7 @@ impl CombatState {
             state
         });
 
-        let mut state = state.flat_map_simple(Self::on_any_card_played);
+        let mut state = state.flat_map_simple(Self::on_any_card_played::<Family>);
 
         state = state.map(|mut state| {
             if let Some(v) = state.relic_state.get_state(RelicPrototype::BrilliantScarf) {
@@ -2475,7 +2528,7 @@ impl CombatState {
                         state
                             .relic_state
                             .set_state(RelicPrototype::OrnamentalFan, 0);
-                        state.add_external_block_to_creature(CharacterIndex::Player, 4)
+                        state.add_external_block_to_creature::<Family>(CharacterIndex::Player, 4)
                     } else {
                         state
                             .relic_state
@@ -2489,8 +2542,8 @@ impl CombatState {
                 if let Some(v) = state.relic_state.get_state(RelicPrototype::LetterOpener) {
                     if v == 2 {
                         state.relic_state.set_state(RelicPrototype::LetterOpener, 0);
-                        state.for_all_enemies(|state, enemy| {
-                            state.apply_unsourced_damage(5, CharacterIndex::Enemy(enemy))
+                        state.for_all_enemies::<Family>(|state, enemy| {
+                            state.apply_unsourced_damage::<Family>(5, CharacterIndex::Enemy(enemy))
                         })
                     } else {
                         state
@@ -2502,7 +2555,7 @@ impl CombatState {
                     Family::Distribution::single_value(state)
                 }
                 .flat_map_simple(|state| {
-                    state.for_all_enemies(|mut state, enemy| {
+                    state.for_all_enemies::<Family>(|mut state, enemy| {
                         let Some(enemy) = state.enemies.get_mut(enemy) else {
                             unreachable!();
                         };
@@ -2523,7 +2576,7 @@ impl CombatState {
                 && Some(0) == state.relic_state.get_state(RelicPrototype::Permafrost)
             {
                 state.relic_state.set_state(RelicPrototype::Permafrost, 1);
-                return state.add_external_block_to_creature(CharacterIndex::Player, 7);
+                return state.add_external_block_to_creature::<Family>(CharacterIndex::Player, 7);
             }
 
             Family::Distribution::single_value(state)
@@ -2534,7 +2587,7 @@ impl CombatState {
                 if state.player.creature.statuses[Status::Burst] > 0 {
                     // TODO: What if the target is no longer valid????
                     state.player.creature.statuses[Status::Burst] -= 1;
-                    state.play_card(permanent_card, target, false)
+                    state.play_card::<Family>(permanent_card, target, false)
                 } else {
                     Family::Distribution::single_value(state)
                 }
@@ -2554,7 +2607,7 @@ impl CombatState {
         let card_draw_from_enchantment = card.enchantment.draw_after_play();
 
         for _ in 0..card_draw_from_enchantment {
-            state = state.flat_map_simple(CombatState::draw_single_card);
+            state = state.flat_map_simple(CombatState::draw_single_card::<Family>);
         }
 
         // Doormaker Grasp
@@ -3759,7 +3812,7 @@ impl EnemyMoveSet {
         &self,
         mut state_machine: EnemyStateMachine,
         status: &mut EnumMap<Status, i16>,
-    ) -> Family::Distribution<Self>::full::Distribution<EnemyStateMachine> {
+    ) -> distribution::full::Distribution<EnemyStateMachine> {
         if state_machine.stunned > 0 {
             state_machine.stunned -= 1;
             return Distribution::single_value(state_machine);

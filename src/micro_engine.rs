@@ -15,7 +15,7 @@ use timer::Timer;
 use crate::{
     combat_action::CombatAction,
     combat_state::{CombatState, PostCombatState},
-    distribution::{self, Distribution},
+    distribution::{Distribution, full::FullFamily},
 };
 
 #[derive(Debug)]
@@ -625,9 +625,7 @@ impl<F: EvaluationFunction> MicroEngine<F> {
             }
         }
 
-        let mut successors = state
-            .clone()
-            .apply::<distribution::full::Distribution<_>>(action);
+        let mut successors = state.clone().apply::<FullFamily>(action);
         // Sort successors by rising probability (and as such by rising influence on the expected value)
         successors.sort_by(|a, b| b.1.total_cmp(&a.1));
         // TODO: Sort?
@@ -1114,9 +1112,7 @@ mod test {
             dbg!(&action);
 
             if let Some(action) = action {
-                let result = state
-                    .apply::<distribution::full::Distribution<_>>(action)
-                    .collapse();
+                let result = state.apply::<FullFamily>(action).collapse();
                 dbg!(&result.player.hand);
                 state = result;
             } else {
