@@ -41,7 +41,7 @@
 
       CARGO_BUILD_TARGET = target;
       meta = {
-        homepage = "https://www.github.com/BloodStainedCrow/FactoryGame/";
+        homepage = "https://www.github.com/BloodStainedCrow/sts2engine/";
         maintainers = with lib.maintainers; [ BloodStainedCrow ];
         mainProgram = "sts2engine";
       };
