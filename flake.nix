@@ -56,6 +56,23 @@
       '';
     });
 
+    rustc_with_debug_symbols = pkgs.callPackage ./debug_rustc/rustc_with_debug_symbols.nix { 
+      fastCross = false; 
+      llvmShared = pkgs.llvm; 
+      llvmSharedForBuild = pkgs.llvm; 
+      llvmSharedForHost = pkgs.llvm; 
+      llvmSharedForTarget = pkgs.llvm; 
+      sha256 = "sha256-uD+SHNPzIf9hT5wGqLhw2JKZ/AKIi0ilVJaDo2gjR0w=";
+      version = "1.94.0";
+
+      nightly = true;
+    };
+
+    debug_toolchain = fenixLib.combine [
+      rustc_with_debug_symbols
+      rustToolchain
+    ];
+
     package = package_for_target { target = "x86_64-unknown-linux-gnu"; toolchain = rustToolchain; };
   in {
 
@@ -63,12 +80,15 @@
     devShells."x86_64-linux".codium = pkgs.mkShell {
       buildInputs = with pkgs; [
         bashInteractive
-        rustToolchain
+        # rustToolchain
 
         perf
         samply
         bacon
         valgrind
+
+        gdb
+        debug_toolchain
 
         (vscode-with-extensions.override {
           vscode = pkgs-codium.vscodium;
