@@ -25,8 +25,8 @@ timer = "0.2.0"
 strum = { version = "0.28.0", features = ["derive"] }
 smallvec = "1.15.1"
 take_mut = "0.2.2"
-sts2mcts = { path = "../sts2mcts", features = ["nps"] }
-# sts2mcts = { path = "../sts2mcts" }
+sts2mcts = { git = "https://github.com/BloodStainedCrow/sts2mcts", features = ["nps"] }
+# sts2mcts = { git = "https://github.com/BloodStainedCrow/sts2mcts" }
 
 [dev-dependencies]
 csv = "1.4"
