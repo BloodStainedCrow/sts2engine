@@ -629,6 +629,7 @@ dependencies = [
 [[package]]
 name = "sts2mcts"
 version = "0.1.0"
+source = "git+https://github.com/BloodStainedCrow/sts2mcts#d7bab2218307cf1755b17db2ecbcf1fd620c937b"
 dependencies = [
  "rand 0.10.0",
  "rapidhash",
